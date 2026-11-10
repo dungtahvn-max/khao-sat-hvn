@@ -1,0 +1,365 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+/* =========================================================
+   1. GLOBAL BLUE THEME OVERRIDES (data-theme="blue")
+   Banner: Xanh đen đậm gradient, Nút: Xanh dương đậm, Khung: Xanh dương nhạt
+   ========================================================= */
+[data-theme="blue"] .bg-\[\#7a0f2b\] {
+  background-color: #1e40af !important;
+}
+
+[data-theme="blue"] .hover\:bg-\[\#8f1334\]:hover,
+[data-theme="blue"] .hover\:bg-\[\#911234\]:hover,
+[data-theme="blue"] .hover\:bg-\[\#a81c43\]:hover,
+[data-theme="blue"] .hover\:bg-\[\#8b112c\]:hover {
+  background-color: #1d4ed8 !important;
+}
+
+[data-theme="blue"] .text-\[\#7a0f2b\] {
+  color: #1e40af !important;
+}
+
+[data-theme="blue"] .text-\[\#5a0a1f\] {
+  color: #1e3a8a !important;
+}
+
+[data-theme="blue"] .hover\:text-\[\#7a0f2b\]:hover {
+  color: #1e40af !important;
+}
+
+[data-theme="blue"] .border-\[\#7a0f2b\] {
+  border-color: #2563eb !important;
+}
+
+[data-theme="blue"] .ring-\[\#7a0f2b\],
+[data-theme="blue"] .focus\:ring-\[\#7a0f2b\]:focus {
+  --tw-ring-color: #2563eb !important;
+}
+
+[data-theme="blue"] .bg-\[\#faf2f4\] {
+  background-color: #eff6ff !important;
+}
+
+/* Blue Banner Gradients: Xanh đen đậm hiệu ứng gradient */
+[data-theme="blue"] .from-\[\#5a0a1f\],
+[data-theme="blue"] .from-\[\#6b0f24\] {
+  background-image: linear-gradient(135deg, #09152b 0%, #1e3a8a 50%, #0c1c38 100%) !important;
+  background-color: #0f244a !important;
+}
+
+[data-theme="blue"] .from-\[\#7a0f2b\] {
+  background-image: linear-gradient(135deg, #1e40af 0%, #2563eb 100%) !important;
+  background-color: #1e40af !important;
+}
+
+/* Rose shades to Blue shades */
+[data-theme="blue"] .bg-rose-50 {
+  background-color: #eff6ff !important;
+}
+
+[data-theme="blue"] .hover\:bg-rose-50:hover {
+  background-color: #eff6ff !important;
+}
+
+[data-theme="blue"] .bg-rose-50\/20,
+[data-theme="blue"] .bg-rose-50\/50,
+[data-theme="blue"] .bg-rose-50\/70 {
+  background-color: rgba(239, 246, 255, 0.7) !important;
+}
+
+[data-theme="blue"] .bg-rose-100 {
+  background-color: #dbeafe !important;
+}
+
+[data-theme="blue"] .hover\:bg-rose-100:hover {
+  background-color: #bfdbfe !important;
+}
+
+[data-theme="blue"] .border-rose-100 {
+  border-color: #dbeafe !important;
+}
+
+[data-theme="blue"] .border-rose-200 {
+  border-color: #bfdbfe !important;
+}
+
+[data-theme="blue"] .border-rose-300 {
+  border-color: #93c5fd !important;
+}
+
+[data-theme="blue"] .hover\:border-rose-300:hover {
+  border-color: #60a5fa !important;
+}
+
+[data-theme="blue"] .text-rose-100 {
+  color: #dbeafe !important;
+}
+
+[data-theme="blue"] .text-rose-200 {
+  color: #bfdbfe !important;
+}
+
+[data-theme="blue"] .text-rose-300 {
+  color: #93c5fd !important;
+}
+
+[data-theme="blue"] .text-rose-600 {
+  color: #2563eb !important;
+}
+
+[data-theme="blue"] .text-rose-700 {
+  color: #1d4ed8 !important;
+}
+
+[data-theme="blue"] .text-rose-800 {
+  color: #1e40af !important;
+}
+
+[data-theme="blue"] .text-rose-900 {
+  color: #1e3a8a !important;
+}
+
+[data-theme="blue"] .ring-rose-200 {
+  --tw-ring-color: #bfdbfe !important;
+}
+
+/* =========================================================
+   2. GLOBAL GREEN THEME OVERRIDES (data-theme="green")
+   Banner: Xanh lá đen đậm gradient, Nút: Xanh lá đậm, Khung: Xanh lá nhạt pastel
+   ========================================================= */
+[data-theme="green"] .bg-\[\#7a0f2b\] {
+  background-color: #047857 !important;
+}
+
+[data-theme="green"] .hover\:bg-\[\#8f1334\]:hover,
+[data-theme="green"] .hover\:bg-\[\#911234\]:hover,
+[data-theme="green"] .hover\:bg-\[\#a81c43\]:hover,
+[data-theme="green"] .hover\:bg-\[\#8b112c\]:hover {
+  background-color: #065f46 !important;
+}
+
+[data-theme="green"] .text-\[\#7a0f2b\] {
+  color: #047857 !important;
+}
+
+[data-theme="green"] .text-\[\#5a0a1f\] {
+  color: #064e3b !important;
+}
+
+[data-theme="green"] .hover\:text-\[\#7a0f2b\]:hover {
+  color: #047857 !important;
+}
+
+[data-theme="green"] .border-\[\#7a0f2b\] {
+  border-color: #059669 !important;
+}
+
+[data-theme="green"] .ring-\[\#7a0f2b\],
+[data-theme="green"] .focus\:ring-\[\#7a0f2b\]:focus {
+  --tw-ring-color: #059669 !important;
+}
+
+[data-theme="green"] .bg-\[\#faf2f4\] {
+  background-color: #ecfdf5 !important;
+}
+
+/* Green Banner Gradients: Xanh lá đen đậm hiệu ứng gradient */
+[data-theme="green"] .from-\[\#5a0a1f\],
+[data-theme="green"] .from-\[\#6b0f24\] {
+  background-image: linear-gradient(135deg, #022419 0%, #064e3b 50%, #021a12 100%) !important;
+  background-color: #033626 !important;
+}
+
+[data-theme="green"] .from-\[\#7a0f2b\] {
+  background-image: linear-gradient(135deg, #047857 0%, #059669 100%) !important;
+  background-color: #047857 !important;
+}
+
+/* Rose shades to Emerald shades: Nền các khung màu xanh lá nhạt pastel */
+[data-theme="green"] .bg-rose-50 {
+  background-color: #ecfdf5 !important;
+}
+
+[data-theme="green"] .hover\:bg-rose-50:hover {
+  background-color: #ecfdf5 !important;
+}
+
+[data-theme="green"] .bg-rose-50\/20,
+[data-theme="green"] .bg-rose-50\/50,
+[data-theme="green"] .bg-rose-50\/70 {
+  background-color: rgba(236, 253, 245, 0.7) !important;
+}
+
+[data-theme="green"] .bg-rose-100 {
+  background-color: #d1fae5 !important;
+}
+
+[data-theme="green"] .hover\:bg-rose-100:hover {
+  background-color: #a7f3d0 !important;
+}
+
+[data-theme="green"] .border-rose-100 {
+  border-color: #d1fae5 !important;
+}
+
+[data-theme="green"] .border-rose-200 {
+  border-color: #a7f3d0 !important;
+}
+
+[data-theme="green"] .border-rose-300 {
+  border-color: #6ee7b7 !important;
+}
+
+[data-theme="green"] .hover\:border-rose-300:hover {
+  border-color: #34d399 !important;
+}
+
+[data-theme="green"] .text-rose-100 {
+  color: #d1fae5 !important;
+}
+
+[data-theme="green"] .text-rose-200 {
+  color: #a7f3d0 !important;
+}
+
+[data-theme="green"] .text-rose-300 {
+  color: #6ee7b7 !important;
+}
+
+[data-theme="green"] .text-rose-600 {
+  color: #059669 !important;
+}
+
+[data-theme="green"] .text-rose-700 {
+  color: #047857 !important;
+}
+
+[data-theme="green"] .text-rose-800 {
+  color: #065f46 !important;
+}
+
+[data-theme="green"] .text-rose-900 {
+  color: #064e3b !important;
+}
+
+[data-theme="green"] .ring-rose-200 {
+  --tw-ring-color: #a7f3d0 !important;
+}
+
+/* =========================================================
+   3. GLASSMORPHISM & MESH GRADIENT THEME (data-theme="glass")
+   ========================================================= */
+[data-theme="glass"] {
+  background-color: #f8fafc;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(199, 210, 254, 0.45) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(254, 205, 211, 0.45) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(186, 230, 253, 0.4) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(254, 240, 138, 0.35) 0px, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(243, 232, 255, 0.4) 0px, transparent 60%);
+  background-attachment: fixed;
+  background-size: 100% 100%;
+}
+
+[data-theme="glass"] .bg-white {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  backdrop-filter: blur(16px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  border-color: rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="glass"] .bg-gradient-to-r.from-\[\#5a0a1f\] {
+  background-image: linear-gradient(135deg, rgba(79, 70, 229, 0.95) 0%, rgba(147, 51, 234, 0.9) 50%, rgba(236, 72, 153, 0.85) 100%) !important;
+  backdrop-filter: blur(16px) !important;
+}
+
+[data-theme="glass"] .bg-\[\#7a0f2b\] {
+  background-color: #4f46e5 !important;
+  background-image: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+}
+
+[data-theme="glass"] .hover\:bg-\[\#8f1334\]:hover,
+[data-theme="glass"] .hover\:bg-\[\#911234\]:hover {
+  background-color: #4338ca !important;
+  background-image: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%) !important;
+}
+
+[data-theme="glass"] .text-\[\#7a0f2b\] {
+  color: #4f46e5 !important;
+}
+
+[data-theme="glass"] .hover\:text-\[\#7a0f2b\]:hover {
+  color: #4338ca !important;
+}
+
+[data-theme="glass"] .border-\[\#7a0f2b\] {
+  border-color: #6366f1 !important;
+}
+
+[data-theme="glass"] .ring-\[\#7a0f2b\],
+[data-theme="glass"] .focus\:ring-\[\#7a0f2b\]:focus {
+  --tw-ring-color: #6366f1 !important;
+}
+
+[data-theme="glass"] .bg-rose-50 {
+  background-color: rgba(238, 242, 255, 0.75) !important;
+  border-color: rgba(199, 210, 254, 0.6) !important;
+}
+
+[data-theme="glass"] .hover\:bg-rose-50:hover {
+  background-color: rgba(224, 231, 255, 0.85) !important;
+}
+
+[data-theme="glass"] .bg-rose-100 {
+  background-color: rgba(224, 231, 255, 0.9) !important;
+}
+
+[data-theme="glass"] .border-rose-100 {
+  border-color: rgba(224, 231, 255, 0.6) !important;
+}
+
+[data-theme="glass"] .border-rose-200 {
+  border-color: rgba(199, 210, 254, 0.6) !important;
+}
+
+[data-theme="glass"] .border-rose-300 {
+  border-color: rgba(165, 180, 252, 0.7) !important;
+}
+
+[data-theme="glass"] .text-rose-100 {
+  color: #e0e7ff !important;
+}
+
+[data-theme="glass"] .text-rose-200 {
+  color: #c7d2fe !important;
+}
+
+[data-theme="glass"] .text-rose-600,
+[data-theme="glass"] .text-rose-700 {
+  color: #4f46e5 !important;
+}
+
+[data-theme="glass"] .text-rose-800,
+[data-theme="glass"] .text-rose-900 {
+  color: #3730a3 !important;
+}
+
+[data-theme="glass"] .bg-\[\#faf2f4\] {
+  background-color: rgba(245, 243, 255, 0.65) !important;
+}
+
+/* Glass Buttons with soft drop shadow and smooth hover effect */
+[data-theme="glass"] button:not(:disabled) {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="glass"] button:not(:disabled):hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 8px 20px -4px rgba(99, 102, 241, 0.25);
+}
+
+[data-theme="glass"] button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
