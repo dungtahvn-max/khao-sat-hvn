@@ -1,142 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Student, Survey, SurveyResponse } from '../types';
 import { getSurveys, getResponses, saveResponse, generateUUID } from '../services/supabase';
-import { generateStudentFileName, uploadFileToGoogleDrive, DEFAULT_GOOGLE_DRIVE_FOLDER_ID } from '../utils/googleDrive';
-import { isAnswerCorrect, calculateTotalScore, getTrueFalseMatchCount, calculateQuestionScore } from '../utils/quiz';
+import { generateStudentFileName, getStudentFileBaseName, extractGoogleDriveFileId, uploadFileToGoogleDrive, DEFAULT_GOOGLE_DRIVE_FOLDER_ID } from '../utils/googleDrive';
+import { isAnswerCorrect } from '../utils/quiz';
 import { formatClassDisplay } from '../utils/classOrder';
-import { MathRenderer } from './MathRenderer';
 import confetti from 'canvas-confetti';
 import {
   CheckCircle2, Clock, AlertTriangle, FileText, Award,
   Sparkles, ArrowLeft, Send, Check, X,
   HelpCircle, ChevronRight, RotateCcw, Calendar, UserCheck, User,
-  Upload, ExternalLink, Loader2, Delete, Calculator
+  Upload, ExternalLink, Loader2
 } from 'lucide-react';
 
 interface StudentPortalProps {
   student: Student;
   announcement?: string;
 }
-
-// Virtual Number Pad for short_number questions
-const VirtualNumberPad: React.FC<{ value: string; onChange: (val: string) => void }> = ({ value, onChange }) => {
-  const handleKeyClick = (key: string) => {
-    if (key === 'BACK') {
-      onChange(value.slice(0, -1));
-    } else if (key === 'CLEAR') {
-      onChange('');
-    } else if (key === '-') {
-      if (value.startsWith('-')) {
-        onChange(value.slice(1));
-      } else {
-        onChange('-' + value);
-      }
-    } else if (key === '.') {
-      if (!value.includes('.') && !value.includes(',')) {
-        onChange(value ? value + '.' : '0.');
-      }
-    } else {
-      onChange(value + key);
-    }
-  };
-
-  return (
-    <div className="max-w-xs space-y-2">
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder="Nhập số..."
-          className="flex-1 p-2.5 bg-white border-2 border-slate-300 rounded-xl font-mono text-base font-bold text-slate-800 text-center tracking-wider focus:border-[#7a0f2b] focus:outline-none"
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => handleKeyClick('CLEAR')}
-            className="px-2.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold cursor-pointer"
-          >
-            Xóa
-          </button>
-        )}
-      </div>
-
-      {/* 4-Row Virtual Number Pad */}
-      <div className="grid grid-cols-3 gap-1.5 p-2 bg-slate-100 rounded-xl border border-slate-200 select-none">
-        {/* Row 1: 1 2 3 */}
-        {['1', '2', '3'].map(digit => (
-          <button
-            key={digit}
-            type="button"
-            onClick={() => handleKeyClick(digit)}
-            className="p-3 bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg font-mono font-bold text-sm text-slate-800 shadow-2xs border border-slate-200 text-center cursor-pointer transition-all"
-          >
-            {digit}
-          </button>
-        ))}
-
-        {/* Row 2: 4 5 6 */}
-        {['4', '5', '6'].map(digit => (
-          <button
-            key={digit}
-            type="button"
-            onClick={() => handleKeyClick(digit)}
-            className="p-3 bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg font-mono font-bold text-sm text-slate-800 shadow-2xs border border-slate-200 text-center cursor-pointer transition-all"
-          >
-            {digit}
-          </button>
-        ))}
-
-        {/* Row 3: 7 8 9 */}
-        {['7', '8', '9'].map(digit => (
-          <button
-            key={digit}
-            type="button"
-            onClick={() => handleKeyClick(digit)}
-            className="p-3 bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg font-mono font-bold text-sm text-slate-800 shadow-2xs border border-slate-200 text-center cursor-pointer transition-all"
-          >
-            {digit}
-          </button>
-        ))}
-
-        {/* Row 4: '-' '0' '.' */}
-        <button
-          type="button"
-          onClick={() => handleKeyClick('-')}
-          className="p-3 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 rounded-lg font-mono font-bold text-base text-slate-800 shadow-2xs border border-slate-300 text-center cursor-pointer transition-all"
-          title="Dấu âm (-)"
-        >
-          -
-        </button>
-        <button
-          type="button"
-          onClick={() => handleKeyClick('0')}
-          className="p-3 bg-white hover:bg-slate-50 active:bg-slate-200 rounded-lg font-mono font-bold text-sm text-slate-800 shadow-2xs border border-slate-200 text-center cursor-pointer transition-all"
-        >
-          0
-        </button>
-        <button
-          type="button"
-          onClick={() => handleKeyClick('.')}
-          className="p-3 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 rounded-lg font-mono font-bold text-base text-slate-800 shadow-2xs border border-slate-300 text-center cursor-pointer transition-all"
-          title="Dấu thập phân (.)"
-        >
-          .
-        </button>
-      </div>
-
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => handleKeyClick('BACK')}
-          className="text-[11px] text-slate-500 hover:text-slate-800 underline font-semibold cursor-pointer"
-        >
-          ⌫ Xóa ký tự cuối (Backspace)
-        </button>
-      </div>
-    </div>
-  );
-};
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcement }) => {
   const [surveys, setSurveys] = useState<Survey[]>([]);
@@ -227,11 +106,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
     }
   };
 
-  // Handle True/False answer selection for a specific statement (0, 1, 2, 3)
-  const handleSelectTrueFalse = (questionId: string, statementIndex: number, isTrue: boolean) => {
+  const handleToggleMultiChoice = (questionId: string, optIndex: number) => {
     setAnswers(prev => {
-      const current = prev[questionId] && typeof prev[questionId] === 'object' ? { ...prev[questionId] } : {};
-      current[statementIndex] = isTrue;
+      const current = Array.isArray(prev[questionId]) ? [...prev[questionId]] : [];
+      const existsIdx = current.indexOf(optIndex);
+      if (existsIdx >= 0) {
+        current.splice(existsIdx, 1);
+      } else {
+        current.push(optIndex);
+      }
+      current.sort((a, b) => a - b);
       return { ...prev, [questionId]: current };
     });
     if (unansweredErrors[questionId]) {
@@ -239,7 +123,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
     }
   };
 
-  // Handle file selection and auto-upload to Google Drive
+  // Handle file selection and auto-upload to Google Drive (inside class subfolder, overwriting old file if exists)
   const handleFileUpload = async (questionId: string, fileCodePrefix: string, file: File) => {
     if (!file) return;
 
@@ -253,7 +137,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
       }
     }
 
+    const previousAnswer = answers[questionId];
+    const oldFileId =
+      (previousAnswer && typeof previousAnswer === 'object'
+        ? previousAnswer.fileId || extractGoogleDriveFileId(previousAnswer.fileUrl)
+        : '') || '';
+
     const formattedName = generateStudentFileName(fileCodePrefix, student, file.name);
+    const fileBaseName = getStudentFileBaseName(fileCodePrefix, student);
+    const classFolderName = formatClassDisplay(student.class_name);
     const folderId = activeSurvey?.google_drive_folder_id?.trim() || DEFAULT_GOOGLE_DRIVE_FOLDER_ID;
 
     // Show immediate preview with upload in progress
@@ -276,6 +168,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
       formattedName,
       (percent) => {
         setUploadingQuestions(prev => ({ ...prev, [questionId]: percent }));
+      },
+      {
+        className: classFolderName,
+        fileBaseName,
+        oldFileId,
       }
     );
 
@@ -283,15 +180,17 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
       setAnswers(prev => ({
         ...prev,
         [questionId]: {
+          fileId: res.fileId || extractGoogleDriveFileId(res.fileUrl),
           fileName: formattedName,
           fileUrl: res.fileUrl,
+          folderName: res.folderName || classFolderName,
           isImage,
           previewUrl: localPreviewUrl || res.fileUrl,
           uploadedAt: new Date().toISOString(),
         },
       }));
       setUploadingQuestions(prev => ({ ...prev, [questionId]: 100 }));
-      showToast(`Đã tải lên Google Drive thành công: ${formattedName}`, 'success');
+      showToast(`Đã tải lên thư mục lớp ${classFolderName}: ${formattedName}`, 'success');
     } else {
       setUploadErrors(prev => ({ ...prev, [questionId]: res.error || 'Lỗi khi tải tệp lên' }));
       showToast(res.error || 'Lỗi tải tệp lên Google Drive', 'error');
@@ -314,33 +213,23 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
 
     activeSurvey.questions.forEach((q) => {
       const ans = answers[q.id];
-      const qType = q.type || (q.options && q.options.length > 0 ? 'single_choice' : 'text');
-
-      if (qType === 'true_false') {
-        // True/False requires all 4 statements (0, 1, 2, 3) to be answered
-        const isNotComplete = !ans || typeof ans !== 'object' || [0, 1, 2, 3].some(idx => ans[idx] === undefined);
-        if (isNotComplete) {
-          errors[q.id] = true;
-          if (!firstUnansweredId) firstUnansweredId = q.id;
-        }
-      } else if (qType === 'file') {
-        const isBlank = !ans || (!ans.fileUrl && !ans.fileName);
-        if (isBlank) {
-          errors[q.id] = true;
-          if (!firstUnansweredId) firstUnansweredId = q.id;
-        }
-      } else {
-        const isBlank = ans === undefined || ans === '' || (typeof ans === 'object' && !ans.fileUrl && !ans.fileName);
-        if (isBlank) {
-          errors[q.id] = true;
-          if (!firstUnansweredId) firstUnansweredId = q.id;
+      const isBlank =
+        ans === undefined ||
+        ans === null ||
+        ans === '' ||
+        (Array.isArray(ans) && ans.length === 0) ||
+        (typeof ans === 'object' && !Array.isArray(ans) && !ans.fileUrl && !ans.fileName);
+      if (isBlank) {
+        errors[q.id] = true;
+        if (!firstUnansweredId) {
+          firstUnansweredId = q.id;
         }
       }
     });
 
     if (firstUnansweredId) {
       setUnansweredErrors(errors);
-      showToast('Vui lòng trả lời đầy đủ tất cả các câu hỏi / các ý mệnh đề trước khi nộp bài!', 'error');
+      showToast('Vui lòng trả lời đầy đủ tất cả các câu hỏi trước khi nộp bài!', 'error');
       const targetEl = questionRefs.current[firstUnansweredId];
       if (targetEl) {
         targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -350,17 +239,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
 
     setSubmitting(true);
     try {
-      let finalScore = 0;
-      let totalQuestions = activeSurvey.questions.length;
-
-      if (activeSurvey.survey_type === 'exam' || activeSurvey.survey_type === 'quiz') {
-        const res = calculateTotalScore(
-          answers,
-          activeSurvey.questions,
-          activeSurvey.survey_type,
-          activeSurvey.exam_config
-        );
-        finalScore = res.totalScore;
+      let score = 0;
+      if (activeSurvey.survey_type === 'quiz') {
+        activeSurvey.questions.forEach(q => {
+          if (isAnswerCorrect(answers[q.id], q)) {
+            score++;
+          }
+        });
       }
 
       const responseRecord: SurveyResponse = {
@@ -370,8 +255,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
         student_name: student.full_name,
         class_name: student.class_name,
         answers: { ...answers },
-        score: finalScore,
-        total_questions: totalQuestions,
+        score,
+        total_questions: activeSurvey.questions.length,
         submitted_at: new Date().toISOString(),
       };
 
@@ -396,7 +281,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
           });
         } catch {}
 
-        showToast('Nộp bài khảo sát / kiểm tra thành công! Cảm ơn em đã tham gia.', 'success');
+        showToast('Nộp bài khảo sát thành công! Cảm ơn em đã tham gia.', 'success');
         setMode('view_result');
         window.scrollTo({ top: 0, behavior: 'smooth' });
         await loadData();
@@ -525,7 +410,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </div>
                       <div className="p-2.5 bg-white rounded-xl border border-slate-200 col-span-2 sm:col-span-1">
                         <span className="text-slate-400 block mb-0.5">Lớp</span>
-                        <span className="font-bold text-[#7a0f2b]">{student.class_name}</span>
+                        <span className="font-bold text-[#7a0f2b]">{formatClassDisplay(student.class_name)}</span>
                       </div>
                     </div>
                   </div>
@@ -633,11 +518,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                           <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-md border ${
                             survey.survey_type === 'form'
                               ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              : survey.survey_type === 'exam'
-                              ? 'bg-purple-900 text-white border-purple-800 shadow-2xs'
-                              : 'bg-[#7a0f2b] text-white border-[#7a0f2b] shadow-2xs'
+                              : 'bg-[#7a0f2b] text-white border border-[#7a0f2b] shadow-2xs'
                           }`}>
-                            {survey.survey_type === 'exam' ? '📝 Bài kiểm tra' : survey.survey_type === 'quiz' ? '🎯 Trắc nghiệm' : '📋 Thu thập thông tin'}
+                            {survey.survey_type === 'quiz' ? 'Trắc nghiệm có chấm điểm' : 'Thu thập thông tin'}
                           </span>
                         </div>
 
@@ -657,9 +540,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                             <div>
                               <span className="text-slate-500 block text-[11px]">Kết quả đạt được:</span>
                               <span className="font-extrabold text-emerald-700 text-sm">
-                                {survey.survey_type === 'exam'
-                                  ? `${resp.score} / 10 điểm`
-                                  : survey.survey_type === 'quiz'
+                                {survey.survey_type === 'quiz'
                                   ? `${resp.score}/${resp.total_questions || survey.questions.length} câu đúng (${Math.round(((resp.score || 0) / (resp.total_questions || survey.questions.length)) * 100)}%)`
                                   : 'Đã nộp phản hồi'}
                               </span>
@@ -744,7 +625,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
             <div className="text-right flex-1 min-w-0">
               <h3 className="text-sm font-bold text-slate-900 truncate">{activeSurvey.title}</h3>
               <p className={`text-xs font-semibold ${activeSurvey.survey_type === 'form' ? 'text-emerald-700' : 'text-[#7a0f2b]'}`}>
-                Đã điền: {Object.keys(answers).length} / {activeSurvey.questions.length} câu
+                Đã điền: {
+                  activeSurvey.questions.filter(q => {
+                    const a = answers[q.id];
+                    if (a === undefined || a === null || a === '') return false;
+                    if (Array.isArray(a)) return a.length > 0;
+                    if (typeof a === 'object') return Boolean(a.fileUrl || a.fileName);
+                    return true;
+                  }).length
+                } / {activeSurvey.questions.length} câu
               </p>
             </div>
           </div>
@@ -813,25 +702,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       {index + 1}
                     </span>
                     <div className="flex-1">
-                      <div className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
-                        <MathRenderer content={q.question} />
-                      </div>
-
-                      {/* Display Question Image if present */}
-                      {q.image_url && (
-                        <div className="mt-3 max-w-md">
-                          <img
-                            src={q.image_url}
-                            alt="Hình ảnh câu hỏi"
-                            className="max-h-64 rounded-xl border border-slate-200 shadow-2xs object-contain bg-slate-50"
-                          />
-                        </div>
-                      )}
-
+                      <p className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                        {q.question}
+                      </p>
                       {isUnanswered && (
-                        <p className="text-xs text-rose-600 font-semibold mt-2 flex items-center gap-1">
+                        <p className="text-xs text-rose-600 font-semibold mt-1 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          Mục này chưa được trả lời đầy đủ!
+                          Mục này chưa được điền thông tin/tải tệp!
                         </p>
                       )}
                     </div>
@@ -871,9 +748,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                                 >
                                   {letter}
                                 </span>
-                                <div className="leading-relaxed">
-                                  <MathRenderer content={optItem.text} inline />
-                                </div>
+                                <span className="leading-relaxed">{optItem.text}</span>
                               </div>
                               <div
                                 className={`w-5 h-5 rounded-full border flex items-center justify-center ml-2 flex-shrink-0 ${
@@ -892,106 +767,62 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </div>
                     )}
 
-                    {/* TYPE 2: True - False (4 Statements with [ĐÚNG] / [SAI] buttons) */}
-                    {qType === 'true_false' && (
-                      <div className="space-y-3 pt-1">
-                        <span className="text-[11px] font-bold text-slate-600 block">
-                          Hãy chọn <b>Đúng</b> hoặc <b>Sai</b> cho từng ý mệnh đề dưới đây:
+                    {/* TYPE 1B: Multi Choice Options (Checkbox - chọn nhiều mục) */}
+                    {qType === 'multi_choice' && optionsToRender.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-[11px] font-semibold text-emerald-700 block mb-1">
+                          ✓ Có thể tích chọn nhiều mục cùng lúc:
                         </span>
+                        {optionsToRender.map((optItem, optIndex) => {
+                          const selectedList: number[] = Array.isArray(selectedValue) ? selectedValue : [];
+                          const isSelected = selectedList.includes(optItem.originalIndex);
+                          const letter = String.fromCharCode(65 + optIndex);
 
-                        <div className="space-y-2">
-                          {['a', 'b', 'c', 'd'].map((letter, optIdx) => {
-                            const currentVal = selectedValue && typeof selectedValue === 'object' ? selectedValue[optIdx] : undefined;
-                            const statementText = q.options?.[optIdx] || `Mệnh đề ${letter}`;
-
-                            return (
+                          return (
+                            <button
+                              key={optIndex}
+                              type="button"
+                              onClick={() => handleToggleMultiChoice(q.id, optItem.originalIndex)}
+                              className={`w-full text-left p-3.5 rounded-xl text-xs sm:text-sm transition-all flex items-center justify-between border cursor-pointer ${
+                                isSelected
+                                  ? isForm
+                                    ? 'bg-emerald-50 border-emerald-600 text-emerald-900 font-bold shadow-xs ring-1 ring-emerald-600'
+                                    : 'bg-rose-50 border-[#7a0f2b] text-[#5a0a1f] font-bold shadow-xs ring-1 ring-[#7a0f2b]'
+                                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span
+                                  className={`w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center flex-shrink-0 border ${
+                                    isSelected
+                                      ? isForm
+                                        ? 'bg-emerald-700 text-white border-emerald-700'
+                                        : 'bg-[#7a0f2b] text-white border-[#7a0f2b]'
+                                      : 'bg-white text-slate-600 border-slate-300'
+                                  }`}
+                                >
+                                  {letter}
+                                </span>
+                                <span className="leading-relaxed">{optItem.text}</span>
+                              </div>
                               <div
-                                key={optIdx}
-                                className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
-                                  currentVal === undefined
-                                    ? isUnanswered
-                                      ? 'bg-rose-50/70 border-rose-300'
-                                      : 'bg-white border-slate-200'
-                                    : 'bg-slate-50/70 border-slate-300'
+                                className={`w-5 h-5 rounded-md border flex items-center justify-center ml-2 flex-shrink-0 ${
+                                  isSelected
+                                    ? isForm
+                                      ? 'border-emerald-700 bg-emerald-700 text-white'
+                                      : 'border-[#7a0f2b] bg-[#7a0f2b] text-white'
+                                    : 'border-slate-300 bg-white'
                                 }`}
                               >
-                                <div className="flex items-start gap-2.5 flex-1">
-                                  <span className="font-extrabold text-slate-800 text-xs mt-0.5">
-                                    {letter})
-                                  </span>
-                                  <div className="text-xs sm:text-sm text-slate-900 leading-relaxed font-medium">
-                                    <MathRenderer content={statementText} inline />
-                                  </div>
-                                </div>
-
-                                {/* True / False toggle buttons */}
-                                <div className="flex items-center gap-2 self-end sm:self-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectTrueFalse(q.id, optIdx, true)}
-                                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
-                                      currentVal === true
-                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm ring-2 ring-emerald-300'
-                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:text-emerald-800 hover:border-emerald-300'
-                                    }`}
-                                  >
-                                    ✓ ĐÚNG
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectTrueFalse(q.id, optIdx, false)}
-                                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
-                                      currentVal === false
-                                        ? 'bg-rose-600 text-white border-rose-600 shadow-sm ring-2 ring-rose-300'
-                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-rose-50 hover:text-rose-800 hover:border-rose-300'
-                                    }`}
-                                  >
-                                    ✗ SAI
-                                  </button>
-                                </div>
+                                {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                               </div>
-                            );
-                          })}
-                        </div>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
 
-                    {/* TYPE 3: Short Answer - Number with Virtual 4-Row Number Pad */}
-                    {qType === 'short_number' && (
-                      <div className="space-y-2 pt-1">
-                        <label className="text-[11px] font-bold text-slate-600 block">
-                          Nhập đáp án số (Dấu thập phân có thể dùng '.' hoặc ','):
-                        </label>
-
-                        <VirtualNumberPad
-                          value={selectedValue !== undefined && selectedValue !== null ? String(selectedValue) : ''}
-                          onChange={val => handleSelectAnswer(q.id, val)}
-                        />
-                      </div>
-                    )}
-
-                    {/* TYPE 4: Short Answer - Text (Phrase) */}
-                    {qType === 'short_text' && (
-                      <div className="space-y-2 pt-1 max-w-md">
-                        <label className="text-[11px] font-bold text-slate-600 block">
-                          Nhập câu trả lời là cụm từ (Mặc định không phân biệt chữ hoa/thường):
-                        </label>
-                        <input
-                          type="text"
-                          autoCapitalize="none"
-                          value={selectedValue || ''}
-                          onChange={e => handleSelectAnswer(q.id, e.target.value.toLowerCase())}
-                          placeholder="Nhập cụm từ đáp án..."
-                          className="w-full text-xs sm:text-sm p-3 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-[#7a0f2b] font-medium"
-                        />
-                        <span className="text-[10px] text-slate-400 block">
-                          * Hệ thống tự động bỏ qua viết hoa, dấu chấm, dấu phẩy và khoảng cách khi chấm điểm.
-                        </span>
-                      </div>
-                    )}
-
-                    {/* TYPE 5: Date Input */}
+                    {/* TYPE 2: Date Input */}
                     {qType === 'date' && (
                       <div className="max-w-xs">
                         <label className="text-[11px] text-slate-500 font-semibold block mb-1">
@@ -1008,7 +839,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </div>
                     )}
 
-                    {/* TYPE 6: File Upload with instant image preview & overwrite */}
+                    {/* TYPE 3: File Upload with instant image preview & overwrite */}
                     {qType === 'file' && (
                       <div className={`p-4 rounded-2xl space-y-3 ${
                         isForm
@@ -1031,7 +862,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                               onChange={e => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                   handleFileUpload(q.id, q.file_code_prefix || 'TEP', file);
+                                  handleFileUpload(q.id, q.file_code_prefix || 'TEP', file);
                                 }
                               }}
                               className="hidden"
@@ -1060,6 +891,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                                     alt={selectedValue.fileName}
                                     className="max-h-64 max-w-full object-contain rounded-md"
                                     onError={(e) => {
+                                      // Hide image container on broken load
                                       (e.target as HTMLElement).style.display = 'none';
                                     }}
                                   />
@@ -1121,7 +953,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </div>
                     )}
 
-                    {/* TYPE 7: Regular Text Input */}
+                    {/* TYPE 4: Regular Text Input */}
                     {qType === 'text' && (
                       <textarea
                         rows={3}
@@ -1205,22 +1037,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                   {activeSurvey.title}
                 </p>
 
-                {(activeSurvey.survey_type === 'quiz' || activeSurvey.survey_type === 'exam') && (
+                {activeSurvey.survey_type === 'quiz' && (
                   <div className="mt-6 inline-flex flex-col sm:flex-row items-center gap-4 bg-white/10 backdrop-blur-md px-6 py-3.5 rounded-2xl border border-white/20">
                     <div className="text-center sm:text-left">
                       <span className="text-xs text-rose-200 block">Tổng điểm đạt được:</span>
-                      <span className="text-3xl font-black text-white">
-                        {activeSurvey.survey_type === 'exam'
-                          ? `${score} / 10 điểm`
-                          : `${score} / ${totalQ} câu đúng`}
-                      </span>
+                      <span className="text-3xl font-black text-white">{score} / {totalQ} câu đúng</span>
                     </div>
                     <div className="h-8 w-px bg-white/20 hidden sm:block"></div>
                     <div className="text-center sm:text-right">
                       <span className="text-xs text-rose-200 block">Tỷ lệ chính xác:</span>
-                      <span className="text-2xl font-extrabold text-amber-300">
-                        {activeSurvey.survey_type === 'exam' ? Math.round((score / 10) * 100) : percent}%
-                      </span>
+                      <span className="text-2xl font-extrabold text-amber-300">{percent}%</span>
                     </div>
                   </div>
                 )}
@@ -1247,7 +1073,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
               {activeSurvey.questions.map((q, index) => {
                 const resp = getStudentResponse(activeSurvey.id);
                 const studentAns = resp?.answers?.[q.id];
-                const qType = q.type || (q.options && q.options.length > 0 ? 'single_choice' : 'text');
                 const isCorrect = isAnswerCorrect(studentAns, q);
 
                 return (
@@ -1266,20 +1091,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                         >
                           {index + 1}
                         </span>
-                        <div>
-                          <div className="text-sm font-bold text-slate-900 leading-snug">
-                            <MathRenderer content={q.question} />
-                          </div>
-                          {q.image_url && (
-                            <div className="mt-2">
-                              <img
-                                src={q.image_url}
-                                alt="Hình ảnh câu hỏi"
-                                className="max-h-48 rounded-lg border border-slate-200 object-contain"
-                              />
-                            </div>
-                          )}
-                        </div>
+                        <p className="text-sm font-bold text-slate-900 leading-snug">{q.question}</p>
                       </div>
                       <span
                         className={`px-2 py-0.5 rounded-full text-xs font-bold flex items-center gap-1 flex-shrink-0 ${
@@ -1300,16 +1112,19 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </span>
                     </div>
 
-                    {/* Breakdown TYPE 1: Single Choice Options */}
-                    {qType === 'single_choice' && q.options && (
+                    {q.options && q.options.length > 0 && (
                       <div className="space-y-2 mt-3 pl-0 sm:pl-10">
                         {q.options.map((opt, optIndex) => {
-                          const isStudentSelected = studentAns === optIndex || String(studentAns).trim() === String(optIndex);
-                          const isCorrectOption = isAnswerCorrect(optIndex, q);
+                          const isStudentSelected = Array.isArray(studentAns)
+                            ? studentAns.includes(optIndex)
+                            : studentAns === optIndex || String(studentAns).trim() === String(optIndex);
+                          const isCorrectOption = activeSurvey.survey_type === 'quiz' ? isAnswerCorrect(optIndex, q) : false;
                           const letter = String.fromCharCode(65 + optIndex);
 
                           let style = 'bg-slate-50 border-slate-200 text-slate-700';
                           if (isCorrectOption) {
+                            style = 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold ring-1 ring-emerald-300';
+                          } else if (isStudentSelected && activeSurvey.survey_type === 'form') {
                             style = 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold ring-1 ring-emerald-300';
                           } else if (isStudentSelected && !isCorrect) {
                             style = 'bg-rose-50 border-rose-400 text-rose-950 font-semibold ring-1 ring-rose-300';
@@ -1324,9 +1139,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                                 <span className="w-6 h-6 rounded-md text-xs font-bold flex items-center justify-center bg-white border border-slate-200 text-slate-800">
                                   {letter}
                                 </span>
-                                <div>
-                                  <MathRenderer content={opt} inline />
-                                </div>
+                                <span>{opt}</span>
                               </div>
                               <div className="text-xs font-semibold flex items-center gap-1">
                                 {isCorrectOption && (
@@ -1348,78 +1161,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ student, announcem
                       </div>
                     )}
 
-                    {/* Breakdown TYPE 2: True - False Breakdown */}
-                    {qType === 'true_false' && (
-                      <div className="space-y-2 mt-3 pl-0 sm:pl-10">
-                        {(() => {
-                          const tfRes = getTrueFalseMatchCount(studentAns, q);
-                          return (
-                            <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 mb-2 text-xs font-semibold text-slate-700 flex items-center justify-between">
-                              <span>Kết quả trùng khớp: <b>{tfRes.matches} / 4 ý</b></span>
-                              <span className="text-[#7a0f2b] font-bold">
-                                {tfRes.matches === 4 ? '100% điểm câu' : tfRes.matches === 3 ? '50% điểm câu' : tfRes.matches === 2 ? '25% điểm câu' : tfRes.matches === 1 ? '10% điểm câu' : '0% điểm'}
-                              </span>
-                            </div>
-                          );
-                        })()}
-
-                        {['a', 'b', 'c', 'd'].map((letter, optIdx) => {
-                          const sVal = studentAns && typeof studentAns === 'object' ? studentAns[optIdx] : undefined;
-                          const cVal = q.correct_answers ? q.correct_answers[optIdx] : false;
-                          const isItemMatch = sVal === cVal;
-                          const statementText = q.options?.[optIdx] || '';
-
-                          return (
-                            <div
-                              key={optIdx}
-                              className={`p-2.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                                isItemMatch
-                                  ? 'bg-emerald-50/70 border-emerald-300 text-emerald-900'
-                                  : 'bg-rose-50/70 border-rose-300 text-rose-900'
-                              }`}
-                            >
-                              <div className="flex items-start gap-2">
-                                <span className="font-bold">{letter})</span>
-                                <div>
-                                  <MathRenderer content={statementText} inline />
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3 font-semibold text-[11px] self-end sm:self-center">
-                                <span>Em chọn: <b>{sVal === true ? 'ĐÚNG' : sVal === false ? 'SAI' : 'Chưa chọn'}</b></span>
-                                <span>Đáp án: <b className="text-emerald-700">{cVal ? 'ĐÚNG' : 'SAI'}</b></span>
-                                <span>{isItemMatch ? '✓' : '✗'}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Breakdown TYPE 3 & 4: Short Answers */}
-                    {(qType === 'short_number' || qType === 'short_text') && (
-                      <div className="mt-3 pl-0 sm:pl-10 space-y-1.5 text-xs">
-                        <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
-                          <div>
-                            <span className="text-slate-500">Câu trả lời của em: </span>
-                            <span className="font-mono font-bold text-slate-900">
-                              {studentAns !== undefined && studentAns !== null && studentAns !== '' ? String(studentAns) : '(Bỏ trống)'}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-slate-500">Đáp án chuẩn: </span>
-                            <span className="font-mono font-bold text-emerald-700">
-                              {String(q.correct_answer)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
                     {q.explanation && (
                       <div className="mt-3.5 pl-0 sm:pl-10">
                         <div className="p-3 bg-rose-50/70 border border-rose-200/60 rounded-xl text-xs text-[#5a0a1f] leading-relaxed">
                           <span className="font-bold text-[#7a0f2b] block mb-0.5">💡 Giải thích chi tiết:</span>
-                          <MathRenderer content={q.explanation} />
+                          {q.explanation}
                         </div>
                       </div>
                     )}

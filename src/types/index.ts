@@ -1,24 +1,15 @@
-export type SurveyType = 'quiz' | 'form' | 'exam';
-export type QuestionType = 'single_choice' | 'multi_choice' | 'text' | 'date' | 'file' | 'true_false' | 'short_number' | 'short_text';
+export type SurveyType = 'quiz' | 'form';
+export type QuestionType = 'single_choice' | 'multi_choice' | 'text' | 'date' | 'file';
 
 export interface Question {
   id: string;
   question: string;
   type?: QuestionType;
   options: string[];
-  correct_answer?: any; // 0-indexed option, or string/number for short answer
-  correct_answers?: boolean[]; // For true_false: array of 4 booleans for ý a, b, c, d
-  points?: number; // Điểm của từng câu
-  image_url?: string; // Link ảnh đính kèm câu hỏi
+  correct_answer?: number; // 0-indexed option
   explanation?: string;
   required?: boolean;
   file_code_prefix?: string; // Mã tệp / Tiền tố đặt tên tệp, vd: CCCD, ANH_THE, GIAY_KHAI_SINH
-}
-
-export interface ExamPartsConfig {
-  part1_points?: number;
-  part2_points?: number;
-  part3_points?: number;
 }
 
 export interface Survey {
@@ -33,10 +24,6 @@ export interface Survey {
   target_classes?: string[]; // Danh sách lớp được giao (rỗng hoặc undefined = toàn trường)
   shuffle_questions?: boolean; // Xáo trộn thứ tự các câu hỏi khi học sinh làm bài
   shuffle_options?: boolean; // Xáo trộn các lựa chọn đáp án trong từng câu hỏi
-  exam_config?: ExamPartsConfig; // Thiết lập điểm cho từng phần trong bài kiểm tra
-  default_points?: number; // Điểm mặc định mỗi câu trong quiz
-  created_by?: string; // Tên đăng nhập của người tạo (admin hoặc giáo viên)
-  created_by_name?: string; // Họ tên người tạo
   questions: Question[];
   created_at?: string;
   updated_at?: string;

@@ -408,7 +408,7 @@ export async function deleteTeacher(id: string, username: string): Promise<boole
 
 export function isValidUUID(str?: string): boolean {
   if (!str || typeof str !== 'string') return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str.trim());
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
 }
 
 export function generateUUID(): string {
@@ -426,6 +426,49 @@ export function generateUUID(): string {
   });
 }
 
+// Helper to decode metadata comments embedded in survey description
+function parseSurveyDescriptionMeta(rawRow: any): Survey {
+  let gdriveId = rawRow.google_drive_folder_id || '';
+  let targetClasses: string[] = Array.isArray(rawRow.target_classes) ? rawRow.target_classes : [];
+  let shuffleQuestions = Boolean(rawRow.shuffle_questions);
+  let shuffleOptions = Boolean(rawRow.shuffle_options);
+  let desc = rawRow.description || '';
+
+  const gdriveMatch = desc.match(/<!-- GDRIVE:(.*?) -->/);
+  if (gdriveMatch) {
+    gdriveId = gdriveMatch[1];
+    desc = desc.replace(/<!-- GDRIVE:(.*?) -->/g, '').trim();
+  }
+
+  const metaMatch = desc.match(/<!-- SURVEY_META:(.*?) -->/);
+  if (metaMatch) {
+    try {
+      const parsedMeta = JSON.parse(metaMatch[1]);
+      if (Array.isArray(parsedMeta.target_classes)) {
+        targetClasses = parsedMeta.target_classes;
+      }
+      if (typeof parsedMeta.shuffle_questions === 'boolean') {
+        shuffleQuestions = parsedMeta.shuffle_questions;
+      }
+      if (typeof parsedMeta.shuffle_options === 'boolean') {
+        shuffleOptions = parsedMeta.shuffle_options;
+      }
+    } catch {
+      // ignore malformed metadata
+    }
+    desc = desc.replace(/<!-- SURVEY_META:(.*?) -->/g, '').trim();
+  }
+
+  return {
+    ...rawRow,
+    description: desc,
+    google_drive_folder_id: gdriveId,
+    target_classes: targetClasses,
+    shuffle_questions: shuffleQuestions,
+    shuffle_options: shuffleOptions,
+  };
+}
+
 // ----------------- SURVEYS -----------------
 export async function getSurveys(): Promise<Survey[]> {
   try {
@@ -435,21 +478,8 @@ export async function getSurveys(): Promise<Survey[]> {
         .from('surveys')
         .select('*')
         .order('created_at', { ascending: false });
-      if (!error && data && data.length > 0) {
-        const mapped: Survey[] = data.map((row: any) => {
-          let gdriveId = row.google_drive_folder_id || '';
-          let desc = row.description || '';
-          const match = desc.match(/<!-- GDRIVE:(.*?) -->/);
-          if (match) {
-            gdriveId = match[1];
-            desc = desc.replace(/<!-- GDRIVE:(.*?) -->/g, '').trim();
-          }
-          return {
-            ...row,
-            description: desc,
-            google_drive_folder_id: gdriveId,
-          };
-        });
+      if (!error && Array.isArray(data)) {
+        const mapped: Survey[] = data.map((row: any) => parseSurveyDescriptionMeta(row));
         safeSetStorage(STORAGE_KEYS.SURVEYS, JSON.stringify(mapped));
         return mapped;
       }
@@ -461,20 +491,7 @@ export async function getSurveys(): Promise<Survey[]> {
   if (raw) {
     try {
       const parsed: Survey[] = JSON.parse(raw);
-      return parsed.map((s: any) => {
-        let gdriveId = s.google_drive_folder_id || '';
-        let desc = s.description || '';
-        const match = desc.match(/<!-- GDRIVE:(.*?) -->/);
-        if (match) {
-          gdriveId = match[1];
-          desc = desc.replace(/<!-- GDRIVE:(.*?) -->/g, '').trim();
-        }
-        return {
-          ...s,
-          description: desc,
-          google_drive_folder_id: gdriveId,
-        };
-      });
+      return parsed.map((s: any) => parseSurveyDescriptionMeta(s));
     } catch {
       // ignore
     }
@@ -489,15 +506,37 @@ export async function saveSurvey(survey: Survey): Promise<boolean> {
     const cleanSurvey: Survey = {
       ...survey,
       id: finalId,
+      target_classes: Array.isArray(survey.target_classes) ? survey.target_classes : [],
+      shuffle_questions: Boolean(survey.shuffle_questions),
+      shuffle_options: Boolean(survey.shuffle_options),
       created_at: survey.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    // 2. Prepare description with embedded GDRIVE id if present (so it persists across all devices)
-    let descriptionToSave = cleanSurvey.description || '';
+    // 2. Prepare description with embedded GDRIVE id & SURVEY_META so they persist in Supabase
+    let descriptionToSave = (cleanSurvey.description || '')
+      .replace(/<!-- GDRIVE:.*? -->/g, '')
+      .replace(/<!-- SURVEY_META:.*? -->/g, '')
+      .trim();
+
     if (cleanSurvey.google_drive_folder_id?.trim()) {
-      descriptionToSave = descriptionToSave.replace(/<!-- GDRIVE:.*? -->/g, '').trim() +
-        `\n<!-- GDRIVE:${cleanSurvey.google_drive_folder_id.trim()} -->`;
+      descriptionToSave = (descriptionToSave ? descriptionToSave + '\n' : '') +
+        `<!-- GDRIVE:${cleanSurvey.google_drive_folder_id.trim()} -->`;
+    }
+
+    const metaObj: Record<string, any> = {};
+    if (cleanSurvey.target_classes && cleanSurvey.target_classes.length > 0) {
+      metaObj.target_classes = cleanSurvey.target_classes;
+    }
+    if (cleanSurvey.shuffle_questions) {
+      metaObj.shuffle_questions = true;
+    }
+    if (cleanSurvey.shuffle_options) {
+      metaObj.shuffle_options = true;
+    }
+    if (Object.keys(metaObj).length > 0) {
+      descriptionToSave = (descriptionToSave ? descriptionToSave + '\n' : '') +
+        `<!-- SURVEY_META:${JSON.stringify(metaObj)} -->`;
     }
 
     // 3. Prepare payload matching existing Supabase columns
@@ -521,6 +560,7 @@ export async function saveSurvey(survey: Survey): Promise<boolean> {
         .upsert(supabasePayload, { onConflict: 'id' });
       if (error) {
         console.error('Supabase survey save error:', error);
+        return false;
       }
     }
 
@@ -553,7 +593,10 @@ export async function deleteSurvey(id: string): Promise<boolean> {
 
       // 2. Delete survey from Supabase
       const { error: svErr } = await supabase.from('surveys').delete().eq('id', id);
-      if (svErr) console.error('Supabase survey delete error:', svErr);
+      if (svErr) {
+        console.error('Supabase survey delete error:', svErr);
+        return false;
+      }
     }
     // 3. Clean up cached surveys
     const currentRaw = safeGetStorage(STORAGE_KEYS.SURVEYS);

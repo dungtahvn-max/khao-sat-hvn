@@ -16,9 +16,6 @@ import {
 import { sortClassNames, compareClassNames, getGradeFromClassName, formatClassDisplay } from '../utils/classOrder';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { SurveyEditorModal } from './SurveyEditorModal';
-import { CodeSurveyModal } from './CodeSurveyModal';
-import { MathRenderer } from './MathRenderer';
 import * as XLSX from 'xlsx';
 import {
   Shield, Users, BookOpen, FileText, Download, Upload,
@@ -29,7 +26,7 @@ import {
   Menu, Palette, Check, Lock, ChevronRight, CheckSquare, Square, User, Eye,
   BarChart3, Copy, Shuffle
 } from 'lucide-react';
-import { isAnswerCorrect, getTrueFalseMatchCount } from '../utils/quiz';
+import { isAnswerCorrect } from '../utils/quiz';
 
 interface AdminPortalProps {
   session?: AuthSession | null;
@@ -109,6 +106,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
   // Survey Builder Modal
   const [showSurveyModal, setShowSurveyModal] = useState(false);
   const [editingSurvey, setEditingSurvey] = useState<Survey | null>(null);
+  const DEFAULT_GOOGLE_DRIVE_FOLDER_ID = '1pS2VfhHEUbc2fWs0K_K6bSjivy0n8OMT';
+
+  const [surveyFormData, setSurveyFormData] = useState<Partial<Survey>>({
+    title: '',
+    description: '',
+    survey_type: 'form',
+    is_active: true,
+    show_answers: false,
+    allow_multiple_attempts: false,
+    google_drive_folder_id: DEFAULT_GOOGLE_DRIVE_FOLDER_ID,
+    target_classes: [],
+    questions: [],
+  });
+  const [surveyAssignScope, setSurveyAssignScope] = useState<'all' | 'classes'>('all');
 
   // Survey Delete Confirmation Modal
   const [surveyToDelete, setSurveyToDelete] = useState<Survey | null>(null);
@@ -116,6 +127,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
 
   // Code Survey Modal
   const [showCodeSurveyModal, setShowCodeSurveyModal] = useState(false);
+  const [codeSurveyText, setCodeSurveyText] = useState('');
 
   // Announcement state
   const [announcementText, setAnnouncementText] = useState('');
@@ -456,25 +468,140 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
       [field]: !survey[field],
       updated_at: new Date().toISOString(),
     };
-    await saveSurvey(updated);
-    setSurveys(prev => prev.map(s => s.id === survey.id ? updated : s));
-    showToast(`Đã cập nhật cấu hình bài khảo sát!`);
+    const ok = await saveSurvey(updated);
+    if (ok) {
+      setSurveys(prev => prev.map(s => s.id === survey.id ? updated : s));
+      showToast(`Đã cập nhật cấu hình bài khảo sát!`);
+    } else {
+      showToast('Lỗi khi lưu cấu hình bài khảo sát lên máy chủ!', 'error');
+    }
   };
 
   const handleOpenAddSurvey = () => {
     setEditingSurvey(null);
+    setSurveyAssignScope('all');
+    setSurveyFormData({
+      id: generateUUID(),
+      title: '',
+      description: '',
+      survey_type: 'form',
+      is_active: true,
+      show_answers: false,
+      allow_multiple_attempts: false,
+      google_drive_folder_id: DEFAULT_GOOGLE_DRIVE_FOLDER_ID,
+      target_classes: [],
+      questions: [
+        {
+          id: 'q1',
+          question: '',
+          type: 'text',
+          options: [],
+          explanation: '',
+          file_code_prefix: '',
+        },
+      ],
+    });
     setShowSurveyModal(true);
   };
 
   const handleOpenEditSurvey = (s: Survey) => {
     setEditingSurvey(s);
+    const hasSpecificClasses = Boolean(s.target_classes && s.target_classes.length > 0 && !s.target_classes.includes('ALL'));
+    setSurveyAssignScope(hasSpecificClasses ? 'classes' : 'all');
+    if (s.survey_type === 'quiz') {
+      const updatedQuestions = (s.questions || []).map(q => ({
+        ...q,
+        type: 'single_choice' as const,
+        options: (!q.options || q.options.length < 2) ? ['', '', '', ''] : q.options,
+        correct_answer: typeof q.correct_answer === 'number' ? q.correct_answer : 0,
+      }));
+      setSurveyFormData({ ...s, target_classes: s.target_classes || [], questions: updatedQuestions });
+    } else {
+      setSurveyFormData({ ...s, target_classes: s.target_classes || [] });
+    }
     setShowSurveyModal(true);
   };
 
-  const handleSaveSurveyFromModal = async (surveyToSave: Survey) => {
+  const handleAddQuestionToSurvey = () => {
+    const isQuiz = (surveyFormData.survey_type || 'form') === 'quiz';
+    const questions = [...(surveyFormData.questions || [])];
+    questions.push({
+      id: `q_${Date.now()}`,
+      question: '',
+      type: isQuiz ? 'single_choice' : 'text',
+      options: ['', '', '', ''],
+      correct_answer: 0,
+      explanation: '',
+      file_code_prefix: '',
+    });
+    setSurveyFormData({ ...surveyFormData, questions });
+  };
+
+  const handleRemoveQuestionFromSurvey = (idx: number) => {
+    const questions = [...(surveyFormData.questions || [])];
+    questions.splice(idx, 1);
+    setSurveyFormData({ ...surveyFormData, questions });
+  };
+
+  const handleSaveSurvey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!surveyFormData.title?.trim()) {
+      showToast('Vui lòng nhập Tiêu đề khảo sát!', 'error');
+      return;
+    }
+    if (!surveyFormData.questions || surveyFormData.questions.length === 0) {
+      showToast('Bài khảo sát phải có ít nhất 1 câu hỏi!', 'error');
+      return;
+    }
+
+    const isQuiz = (surveyFormData.survey_type || 'form') === 'quiz';
+    const processedQuestions = (surveyFormData.questions as Question[]).map(q => {
+      if (isQuiz) {
+        const opts = (!q.options || q.options.length < 2) ? ['', '', '', ''] : q.options;
+        const ca = typeof q.correct_answer === 'number' && q.correct_answer >= 0 && q.correct_answer < opts.length ? q.correct_answer : 0;
+        return {
+          ...q,
+          type: 'single_choice' as const,
+          options: opts,
+          correct_answer: ca,
+        };
+      }
+      if (q.type === 'single_choice' || q.type === 'multi_choice') {
+        const opts = (!q.options || q.options.length < 2) ? ['', ''] : q.options;
+        return {
+          ...q,
+          options: opts,
+        };
+      }
+      return q;
+    });
+
+    const surveyId = (editingSurvey?.id && isValidUUID(editingSurvey.id))
+      ? editingSurvey.id
+      : (surveyFormData.id && isValidUUID(surveyFormData.id) ? surveyFormData.id : generateUUID());
+
+    const finalTargetClasses = surveyAssignScope === 'classes' ? (surveyFormData.target_classes || []) : [];
+
+    const surveyToSave: Survey = {
+      id: surveyId,
+      title: surveyFormData.title.trim(),
+      description: surveyFormData.description || '',
+      survey_type: surveyFormData.survey_type || 'form',
+      is_active: surveyFormData.is_active ?? true,
+      show_answers: surveyFormData.show_answers ?? false,
+      allow_multiple_attempts: surveyFormData.allow_multiple_attempts ?? false,
+      google_drive_folder_id: isQuiz ? '' : (surveyFormData.google_drive_folder_id?.trim() || DEFAULT_GOOGLE_DRIVE_FOLDER_ID),
+      target_classes: finalTargetClasses,
+      shuffle_questions: surveyFormData.shuffle_questions || false,
+      shuffle_options: surveyFormData.shuffle_options || false,
+      questions: processedQuestions,
+      created_at: editingSurvey ? editingSurvey.created_at : new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
     const ok = await saveSurvey(surveyToSave);
     if (ok) {
-      showToast('Đã lưu bài khảo sát / kiểm tra thành công!');
+      showToast('Đã lưu bài khảo sát thành công!');
       setShowSurveyModal(false);
       setSurveys(prev => {
         const exists = prev.some(s => s.id === surveyToSave.id);
@@ -484,30 +611,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
         setProgressSurveyId(surveyToSave.id);
       }
       await loadAllData();
-      return true;
     } else {
       showToast('Lỗi khi lưu bài khảo sát', 'error');
-      return false;
-    }
-  };
-
-  const handleSaveSurveyFromCode = async (surveyToSave: Survey) => {
-    const ok = await saveSurvey(surveyToSave);
-    if (ok) {
-      showToast(`Tạo thành công khảo sát "${surveyToSave.title}" từ mã code!`);
-      setShowCodeSurveyModal(false);
-      setSurveys(prev => {
-        const exists = prev.some(s => s.id === surveyToSave.id);
-        return exists ? prev.map(s => s.id === surveyToSave.id ? surveyToSave : s) : [surveyToSave, ...prev];
-      });
-      if (!progressSurveyId) {
-        setProgressSurveyId(surveyToSave.id);
-      }
-      await loadAllData();
-      return true;
-    } else {
-      showToast('Lỗi khi lưu khảo sát từ code', 'error');
-      return false;
     }
   };
 
@@ -545,6 +650,143 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
     }
   };
 
+  // ----------------- CODE SURVEY BUILDER -----------------
+  const SAMPLE_SURVEY_CODE = JSON.stringify(
+    {
+      title: "Thu thập hồ sơ & thông tin học sinh đầu năm",
+      description: "Biểu mẫu thu thập thông tin hồ sơ học sinh Trường THPT Huỳnh Văn Nghệ phục vụ quản lý năm học mới.",
+      survey_type: "form",
+      target_classes: [], // Để trống [] là giao Toàn trường, hoặc nhập danh sách lớp ví dụ: ["10.1", "10.2"]
+      google_drive_folder_id: "1pS2VfhHEUbc2fWs0K_K6bSjivy0n8OMT",
+      questions: [
+        {
+          id: "q1",
+          question: "Họ và tên cha/mẹ hoặc người giám hộ",
+          type: "text",
+          required: true
+        },
+        {
+          id: "q2",
+          question: "Số điện thoại liên hệ của phụ huynh",
+          type: "text",
+          required: true
+        },
+        {
+          id: "q3",
+          question: "Ngày cấp Căn cước công dân của học sinh",
+          type: "date",
+          required: true
+        },
+        {
+          id: "q4",
+          question: "Phương tiện di chuyển đến trường hàng ngày",
+          type: "single_choice",
+          options: ["Xe đạp", "Xe đạp điện / xe máy điện", "Xe buýt", "Phụ huynh đưa đón", "Đi bộ"]
+        },
+        {
+          id: "q4b",
+          question: "Các môn năng khiếu / câu lạc bộ em muốn tham gia (có thể chọn nhiều)",
+          type: "multi_choice",
+          options: ["Bóng đá", "Bóng chuyền", "Âm nhạc", "Mỹ thuật", "Tin học - Robotics"]
+        },
+        {
+          id: "q5",
+          question: "Tải lên ảnh chụp mặt trước Căn cước công dân",
+          type: "file",
+          file_code_prefix: "CCCD_MAT_TRUOC",
+          required: true
+        },
+        {
+          id: "q6",
+          question: "Tải lên ảnh thẻ 3x4 (nền trắng)",
+          type: "file",
+          file_code_prefix: "ANH_THE",
+          required: true
+        }
+      ]
+    },
+    null,
+    2
+  );
+
+  const handleDownloadSampleCode = () => {
+    const blob = new Blob([SAMPLE_SURVEY_CODE], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'khao_sat_mau_code.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Đã tải xuống file code mẫu khao_sat_mau_code.json');
+  };
+
+  const handleInsertSampleCode = () => {
+    setCodeSurveyText(SAMPLE_SURVEY_CODE);
+  };
+
+  const handleCreateSurveyFromCode = async () => {
+    if (!codeSurveyText.trim()) {
+      showToast('Vui lòng dán đoạn mã JSON khảo sát vào ô!', 'error');
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(codeSurveyText);
+      if (!parsed.title || !parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+        showToast('Mã JSON không hợp lệ: phải có trường "title" và mảng "questions" có ít nhất 1 câu hỏi!', 'error');
+        return;
+      }
+
+      const codeId = (parsed.id && isValidUUID(parsed.id)) ? parsed.id : generateUUID();
+      const isQuizType = parsed.survey_type === 'quiz';
+
+      const surveyToSave: Survey = {
+        id: codeId,
+        title: String(parsed.title).trim(),
+        description: parsed.description || '',
+        survey_type: isQuizType ? 'quiz' : 'form',
+        is_active: parsed.is_active !== undefined ? Boolean(parsed.is_active) : true,
+        show_answers: parsed.show_answers !== undefined ? Boolean(parsed.show_answers) : false,
+        allow_multiple_attempts: parsed.allow_multiple_attempts !== undefined ? Boolean(parsed.allow_multiple_attempts) : false,
+        google_drive_folder_id: isQuizType ? '' : (parsed.google_drive_folder_id?.trim() || DEFAULT_GOOGLE_DRIVE_FOLDER_ID),
+        target_classes: Array.isArray(parsed.target_classes) ? parsed.target_classes : [],
+        shuffle_questions: Boolean(parsed.shuffle_questions),
+        shuffle_options: Boolean(parsed.shuffle_options),
+        questions: parsed.questions.map((q: any, i: number) => ({
+          id: q.id || `q_${i + 1}`,
+          question: q.question || `Câu hỏi ${i + 1}`,
+          type: isQuizType ? 'single_choice' : (q.type || 'text'),
+          options: Array.isArray(q.options) ? q.options : (isQuizType ? ['', '', '', ''] : []),
+          correct_answer: typeof q.correct_answer === 'number' ? q.correct_answer : 0,
+          explanation: q.explanation || '',
+          file_code_prefix: q.file_code_prefix || '',
+          required: q.required ?? true,
+        })),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const ok = await saveSurvey(surveyToSave);
+      if (ok) {
+        showToast(`Tạo thành công khảo sát "${surveyToSave.title}" từ mã code!`);
+        setShowCodeSurveyModal(false);
+        setCodeSurveyText('');
+        setSurveys(prev => {
+          const exists = prev.some(s => s.id === surveyToSave.id);
+          return exists ? prev.map(s => s.id === surveyToSave.id ? surveyToSave : s) : [surveyToSave, ...prev];
+        });
+        if (!progressSurveyId) {
+          setProgressSurveyId(surveyToSave.id);
+        }
+        await loadAllData();
+      } else {
+        showToast('Lỗi khi lưu khảo sát từ code', 'error');
+      }
+    } catch (err: any) {
+      showToast('Lỗi định dạng JSON: ' + err.message, 'error');
+    }
+  };
+
   // ----------------- SETTINGS & ANNOUNCEMENT -----------------
   const handleSaveAnnouncement = async () => {
     await saveAppSettings({ announcement: announcementText });
@@ -561,13 +803,60 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
   };
 
   // ----------------- FILTERED PROGRESS CALCULATION -----------------
+  const getEligibleStudentsForSurvey = (survey?: Survey): Student[] => {
+    if (!survey?.target_classes || survey.target_classes.length === 0 || survey.target_classes.includes('ALL')) {
+      return students;
+    }
+    const targetSet = new Set(survey.target_classes.map(c => c.trim().toUpperCase()));
+    return students.filter(s => targetSet.has(s.class_name.trim().toUpperCase()));
+  };
+
   const selectedProgressSurvey = surveys.find(s => s.id === progressSurveyId) || surveys[0];
+  const isSelectedSurveyScoped = Boolean(
+    selectedProgressSurvey?.target_classes &&
+    selectedProgressSurvey.target_classes.length > 0 &&
+    !selectedProgressSurvey.target_classes.includes('ALL')
+  );
+
+  const eligibleStudents = useMemo(
+    () => getEligibleStudentsForSurvey(selectedProgressSurvey),
+    [students, selectedProgressSurvey]
+  );
+
+  const eligibleClasses = useMemo(
+    () => sortClassNames(Array.from(new Set(eligibleStudents.map(s => s.class_name.trim().toUpperCase())))),
+    [eligibleStudents]
+  );
+
+  const eligibleGrades = useMemo(
+    () =>
+      Array.from(new Set(eligibleStudents.map(s => getGradeFromClassName(s.class_name)))).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true })
+      ),
+    [eligibleStudents]
+  );
+
+  useEffect(() => {
+    if (progressScope === 'ALL') return;
+    if (progressScope.startsWith('GRADE_')) {
+      const gradeTarget = progressScope.replace('GRADE_', 'Khối ');
+      if (!eligibleGrades.includes(gradeTarget)) {
+        setProgressScope('ALL');
+      }
+    } else if (progressScope.startsWith('CLASS_')) {
+      const classTarget = progressScope.replace('CLASS_', '');
+      if (!eligibleClasses.includes(classTarget)) {
+        setProgressScope('ALL');
+      }
+    }
+  }, [selectedProgressSurvey?.id, eligibleGrades, eligibleClasses, progressScope]);
+
   const currentSurveyResponses = responses.filter(r => r.survey_id === selectedProgressSurvey?.id);
   const currentRespMap = new Map<string, SurveyResponse>();
   currentSurveyResponses.forEach(r => currentRespMap.set(r.student_cccd, r));
 
-  // Filter students based on Scope (Toàn trường / Khối / Lớp) and Status (Tất cả / Đã làm / Chưa làm)
-  const matchedStudents = students.filter(s => {
+  // Filter students based on Scope (Toàn phạm vi giao / Khối / Lớp) and Status (Tất cả / Đã làm / Chưa làm)
+  const matchedStudents = eligibleStudents.filter(s => {
     // 1. Filter by Scope
     if (progressScope.startsWith('GRADE_')) {
       const gradeTarget = progressScope.replace('GRADE_', 'Khối ');
@@ -591,8 +880,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
     return true;
   });
 
-  // Calculate scope stats
-  const scopeTotalStudents = students.filter(s => {
+  // Calculate scope stats (only within eligibleStudents for this survey)
+  const scopeTotalStudents = eligibleStudents.filter(s => {
     if (progressScope.startsWith('GRADE_')) {
       const gradeTarget = progressScope.replace('GRADE_', 'Khối ');
       return getGradeFromClassName(s.class_name) === gradeTarget;
@@ -612,7 +901,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
   const handleExportFilteredExcel = () => {
     if (!selectedProgressSurvey) return;
     const scopeLabel = progressScope === 'ALL'
-      ? 'Toàn trường'
+      ? (isSelectedSurveyScoped ? 'Pham_Vi_Giao' : 'Toàn trường')
       : progressScope.startsWith('GRADE_')
       ? progressScope.replace('GRADE_', 'Khối ')
       : `Lớp ${progressScope.replace('CLASS_', '')}`;
@@ -632,12 +921,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
     );
   };
 
-  // Detailed Class-by-Class Progress for selectedProgressSurvey
+  // Detailed Class-by-Class Progress for selectedProgressSurvey (only classes in scope)
   const classProgressData = useMemo(() => {
     if (!selectedProgressSurvey) return [];
     
-    return allClasses.map((cls) => {
-      const classStudents = students.filter(s => s.class_name.trim().toUpperCase() === cls);
+    return eligibleClasses.map((cls) => {
+      const classStudents = eligibleStudents.filter(s => s.class_name.trim().toUpperCase() === cls);
       const totalInClass = classStudents.length;
       const classResponses = classStudents
         .map(s => currentRespMap.get(s.cccd))
@@ -686,7 +975,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
         latestSubmissionTime,
       };
     });
-  }, [allClasses, students, currentRespMap, selectedProgressSurvey]);
+  }, [eligibleClasses, eligibleStudents, currentRespMap, selectedProgressSurvey]);
 
   const sortedClassProgress = useMemo(() => {
     const list = [...classProgressData];
@@ -716,8 +1005,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
   }, [classProgressData, classProgressSort]);
 
   const gradeSummaries = useMemo(() => {
-    const grades = ['Khối 10', 'Khối 11', 'Khối 12'];
-    return grades.map(g => {
+    return eligibleGrades.map(g => {
       const items = classProgressData.filter(c => c.grade === g);
       const total = items.reduce((acc, i) => acc + i.totalInClass, 0);
       const done = items.reduce((acc, i) => acc + i.completedInClass, 0);
@@ -731,7 +1019,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
 
       return { grade: g, total, done, rate, avgScore };
     });
-  }, [classProgressData, selectedProgressSurvey]);
+  }, [eligibleGrades, classProgressData, selectedProgressSurvey]);
 
   const handleCopyZaloAdminMessage = () => {
     if (!selectedProgressSurvey) return;
@@ -748,8 +1036,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
     msg += `(V/v: Cập nhật tiến độ đợt khảo sát: "${selectedProgressSurvey.title}")\n`;
     msg += `--------------------------------------------------\n\n`;
     msg += `Kính gửi Quý Thầy/Cô,\n`;
-    msg += `Ban Quản trị xin gửi thông tin cập nhật tiến độ khảo sát toàn trường tính đến hiện tại:\n`;
-    msg += `• Toàn trường: ${completedAll}/${totalAll} học sinh hoàn thành (Tỉ lệ: ${overallRate}%).\n`;
+    msg += `Ban Quản trị xin gửi thông tin cập nhật tiến độ khảo sát ${isSelectedSurveyScoped ? 'các lớp trong phạm vi được giao' : 'toàn trường'} tính đến hiện tại:\n`;
+    msg += `• ${isSelectedSurveyScoped ? 'Phạm vi được giao' : 'Toàn trường'}: ${completedAll}/${totalAll} học sinh hoàn thành (Tỉ lệ: ${overallRate}%).\n`;
     msg += `• Đa số các lớp (hơn 70% tổng số lớp) đã đạt tiến độ rất tốt và tích cực.\n\n`;
 
     if (lowerClasses.length > 0) {
@@ -825,10 +1113,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
           <aside className="w-full md:w-64 shrink-0">
             <div className="bg-white/75 backdrop-blur-md p-4 rounded-2xl border border-white/60 shadow-lg md:sticky md:top-20 space-y-4">
               <div className="px-2 py-1">
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 bg-indigo-50/80 px-2.5 py-1 rounded-full border border-indigo-200/50">
-                  Admin Portal
-                </span>
-                <h2 className="text-sm font-black text-slate-900 mt-2">Hệ thống Khảo sát</h2>
+                <h2 className="text-sm font-black text-slate-900">Hệ thống Khảo sát</h2>
                 <p className="text-[11px] text-slate-500">THPT Huỳnh Văn Nghệ</p>
               </div>
 
@@ -947,16 +1232,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                   onChange={e => setProgressScope(e.target.value)}
                   className="w-full p-2 bg-white border border-slate-300 rounded-lg font-semibold text-[#7a0f2b]"
                 >
-                  <option value="ALL">🏫 Toàn trường (Tất cả các lớp)</option>
+                  <option value="ALL">
+                    {isSelectedSurveyScoped
+                      ? `🎯 Tất cả lớp được giao (${eligibleClasses.length} lớp - ${eligibleStudents.length} HS)`
+                      : '🏫 Toàn trường (Tất cả các lớp)'}
+                  </option>
                   <optgroup label="Theo Khối">
-                    {allGrades.map(g => (
+                    {eligibleGrades.map(g => (
                       <option key={g} value={`GRADE_${g.replace('Khối ', '')}`}>
                         {g}
                       </option>
                     ))}
                   </optgroup>
                   <optgroup label="Theo Lớp cụ thể">
-                    {allClasses.map(c => (
+                    {eligibleClasses.map(c => (
                       <option key={c} value={`CLASS_${c}`}>
                         Lớp {formatClassDisplay(c)}
                       </option>
@@ -1614,13 +1903,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {surveys.map(sv => {
-                const svResponses = responses.filter(r => r.survey_id === sv.id);
+                const svEligibleStudents = getEligibleStudentsForSurvey(sv);
+                const svEligibleCccdSet = new Set(svEligibleStudents.map(s => s.cccd));
+                const svResponses = responses.filter(r => r.survey_id === sv.id && svEligibleCccdSet.has(r.student_cccd));
+                const isScoped = Boolean(sv.target_classes && sv.target_classes.length > 0 && !sv.target_classes.includes('ALL'));
+
                 return (
                   <div key={sv.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                     <div>
-                      <h4 className="font-bold text-slate-900 text-sm">{sv.title}</h4>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h4 className="font-bold text-slate-900 text-sm">{sv.title}</h4>
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600 shrink-0">
+                          {isScoped ? `${sv.target_classes?.length} lớp` : 'Toàn trường'}
+                        </span>
+                      </div>
                       <p className="text-xs text-slate-500">
-                        Đã có <b>{svResponses.length}</b> học sinh nộp bài
+                        Đã có <b>{svResponses.length}</b> / <b>{svEligibleStudents.length}</b> học sinh trong phạm vi nộp bài
                       </p>
                     </div>
 
@@ -1629,16 +1927,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                         onClick={() => {
                           exportFilteredSurveyResponsesToExcel(
                             sv,
-                            students,
+                            svEligibleStudents,
                             responses,
-                            'Toan_Truong',
+                            isScoped ? 'Pham_Vi_Giao' : 'Toan_Truong',
                             'Tat_Ca'
                           );
                         }}
                         className="px-3 py-2 bg-[#7a0f2b] hover:bg-[#8f1334] text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer"
                       >
                         <FileSpreadsheet className="w-3.5 h-3.5" />
-                        Xuất danh sách chi tiết toàn trường (.xlsx)
+                        {isScoped ? 'Xuất danh sách phạm vi được giao (.xlsx)' : 'Xuất danh sách chi tiết toàn trường (.xlsx)'}
                       </button>
                     </div>
                   </div>
@@ -2388,22 +2686,532 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
         </div>
       )}
 
-      {/* ----------------- MODAL: SURVEY / FORM / EXAM BUILDER ----------------- */}
-      <SurveyEditorModal
-        isOpen={showSurveyModal}
-        onClose={() => setShowSurveyModal(false)}
-        onSave={handleSaveSurveyFromModal}
-        editingSurvey={editingSurvey}
-        allClasses={allClasses}
-        isAdmin={true}
-      />
+      {/* ----------------- MODAL: SURVEY / FORM BUILDER ----------------- */}
+      {showSurveyModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-4xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 bg-[#7a0f2b] text-white flex items-center justify-between">
+              <h3 className="font-bold text-base">
+                {editingSurvey ? 'Chỉnh sửa Khảo sát / Biểu mẫu' : 'Tạo mới Khảo sát / Biểu mẫu thu thập'}
+              </h3>
+              <button
+                onClick={() => setShowSurveyModal(false)}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSurvey} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label className="font-bold text-slate-800 block mb-1">Tiêu đề khảo sát:</label>
+                  <input
+                    type="text"
+                    required
+                    value={surveyFormData.title || ''}
+                    onChange={e => setSurveyFormData({ ...surveyFormData, title: e.target.value })}
+                    placeholder="Nhập tiêu đề khảo sát..."
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 block mb-1">Loại khảo sát:</label>
+                  <select
+                    value={surveyFormData.survey_type || 'form'}
+                    onChange={e => {
+                      const newType = e.target.value as 'form' | 'quiz';
+                      if (newType === 'quiz') {
+                        const updatedQuestions = (surveyFormData.questions || []).map(q => ({
+                          ...q,
+                          type: 'single_choice' as const,
+                          options: (!q.options || q.options.length < 2) ? ['', '', '', ''] : q.options,
+                          correct_answer: typeof q.correct_answer === 'number' ? q.correct_answer : 0,
+                        }));
+                        setSurveyFormData({
+                          ...surveyFormData,
+                          survey_type: newType,
+                          questions: updatedQuestions.length > 0 ? updatedQuestions : [
+                            {
+                              id: `q_${Date.now()}`,
+                              question: '',
+                              type: 'single_choice',
+                              options: ['', '', '', ''],
+                              correct_answer: 0,
+                              explanation: '',
+                              file_code_prefix: '',
+                            }
+                          ],
+                        });
+                      } else {
+                        setSurveyFormData({ ...surveyFormData, survey_type: newType });
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-bold text-[#7a0f2b]"
+                  >
+                    <option value="form">Thu thập thông tin / ý kiến</option>
+                    <option value="quiz">Trắc nghiệm có chấm điểm</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">Mô tả / Hướng dẫn học sinh:</label>
+                <textarea
+                  rows={2}
+                  value={surveyFormData.description || ''}
+                  onChange={e => setSurveyFormData({ ...surveyFormData, description: e.target.value })}
+                  placeholder="Mô tả mục đích và lưu ý khi làm bài..."
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl"
+                ></textarea>
+              </div>
+
+              {/* Google Drive Folder ID setting (Chỉ hiển thị khi thu thập thông tin, không hiển thị khi trắc nghiệm chấm điểm) */}
+              {surveyFormData.survey_type !== 'quiz' && (
+                <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-xl space-y-1">
+                  <label className="font-bold text-[#7a0f2b] block flex items-center gap-1.5">
+                    <HardDrive className="w-4 h-4" />
+                    Mã ID Thư mục Google Drive (để lưu tệp đính kèm khi học sinh tải lên):
+                  </label>
+                  <input
+                    type="text"
+                    autoCapitalize="none"
+                    value={surveyFormData.google_drive_folder_id || ''}
+                    onChange={e => setSurveyFormData({ ...surveyFormData, google_drive_folder_id: e.target.value })}
+                    placeholder="Mặc định: 1pS2VfhHEUbc2fWs0K_K6bSjivy0n8OMT"
+                    className="w-full p-2 bg-white border border-rose-300 rounded-lg font-mono text-xs"
+                  />
+                  <span className="text-[11px] text-slate-500 block">
+                    Mặc định lưu vào thư mục Google Drive: <code className="font-mono font-bold text-rose-800">1pS2VfhHEUbc2fWs0K_K6bSjivy0n8OMT</code>
+                  </span>
+                </div>
+              )}
+
+              {/* Quiz Shuffle Options (Chỉ hiển thị khi trắc nghiệm có chấm điểm) */}
+              {surveyFormData.survey_type === 'quiz' && (
+                <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl space-y-2">
+                  <span className="font-bold text-amber-900 block flex items-center gap-1.5 text-xs">
+                    <Shuffle className="w-4 h-4 text-amber-700" />
+                    Tùy chọn xáo trộn đề trắc nghiệm:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-6 text-xs">
+                    <label className="inline-flex items-center gap-2 cursor-pointer font-semibold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={!!surveyFormData.shuffle_questions}
+                        onChange={e => setSurveyFormData({ ...surveyFormData, shuffle_questions: e.target.checked })}
+                        className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Xáo trộn thứ tự câu hỏi</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 cursor-pointer font-semibold text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={!!surveyFormData.shuffle_options}
+                        onChange={e => setSurveyFormData({ ...surveyFormData, shuffle_options: e.target.checked })}
+                        className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Xáo trộn thứ tự các đáp án</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Target Scope Selection: Mặc định Toàn trường, tùy chọn Chọn lớp */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <label className="font-bold text-slate-800 block text-xs">
+                      Phạm vi giao bài khảo sát:
+                    </label>
+                    <span className="text-[11px] text-slate-500">
+                      Mặc định giao cho tất cả học sinh toàn trường hoặc chỉ định các lớp cụ thể
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold text-slate-700">
+                      <input
+                        type="radio"
+                        name="assignScope"
+                        checked={surveyAssignScope === 'all'}
+                        onChange={() => {
+                          setSurveyAssignScope('all');
+                          setSurveyFormData(prev => ({ ...prev, target_classes: [] }));
+                        }}
+                        className="text-[#7a0f2b] focus:ring-[#7a0f2b]"
+                      />
+                      <span>Toàn trường</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold text-[#7a0f2b]">
+                      <input
+                        type="radio"
+                        name="assignScope"
+                        checked={surveyAssignScope === 'classes'}
+                        onChange={() => {
+                          setSurveyAssignScope('classes');
+                        }}
+                        className="text-[#7a0f2b] focus:ring-[#7a0f2b]"
+                      />
+                      <span>Chọn lớp</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Class multi-select checkboxes when 'classes' is selected */}
+                {surveyAssignScope === 'classes' && (
+                  <div className="pt-2 border-t border-slate-200 space-y-2 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-600">
+                        Đã chọn: <b className="text-[#7a0f2b]">{(surveyFormData.target_classes || []).length}</b> / {allClasses.length} lớp
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSurveyFormData(prev => ({ ...prev, target_classes: [...allClasses] }))}
+                          className="text-[11px] text-blue-700 hover:underline cursor-pointer font-semibold"
+                        >
+                          Chọn tất cả lớp
+                        </button>
+                        <span className="text-slate-300">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setSurveyFormData(prev => ({ ...prev, target_classes: [] }))}
+                          className="text-[11px] text-slate-500 hover:underline cursor-pointer"
+                        >
+                          Bỏ chọn hết
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="max-h-40 overflow-y-auto p-2 bg-white rounded-lg border border-slate-300 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                      {allClasses.map(c => {
+                        const isChecked = (surveyFormData.target_classes || []).includes(c);
+                        return (
+                          <label
+                            key={c}
+                            className={`flex items-center gap-1.5 p-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer transition-colors ${
+                              isChecked
+                                ? 'bg-rose-50 border-[#7a0f2b] text-[#7a0f2b]'
+                                : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={e => {
+                                const current = surveyFormData.target_classes || [];
+                                const updated = e.target.checked
+                                  ? [...current, c]
+                                  : current.filter(cls => cls !== c);
+                                setSurveyFormData(prev => ({ ...prev, target_classes: updated }));
+                              }}
+                              className="w-3.5 h-3.5 rounded text-[#7a0f2b] focus:ring-[#7a0f2b]"
+                            />
+                            <span className="truncate">{formatClassDisplay(c)}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Questions Builder */}
+              <div className="space-y-4 pt-3 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    Danh sách câu hỏi ({surveyFormData.questions?.length || 0})
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={handleAddQuestionToSurvey}
+                    className="inline-flex items-center px-3 py-1.5 bg-rose-50 text-[#7a0f2b] hover:bg-rose-100 rounded-xl font-bold cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Thêm câu hỏi mới
+                  </button>
+                </div>
+
+                {surveyFormData.questions?.map((q, qIndex) => (
+                  <div key={q.id || qIndex} className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-[#7a0f2b]">Câu {qIndex + 1}:</span>
+                      <div className="flex items-center gap-2">
+                        {/* Question Type selector */}
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-slate-500 font-semibold">Loại:</span>
+                          {surveyFormData.survey_type === 'quiz' ? (
+                            <span className="px-2 py-0.5 bg-rose-50 border border-rose-200 text-[#7a0f2b] rounded text-xs font-bold flex items-center gap-1 shadow-2xs">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#7a0f2b]" />
+                              Trắc nghiệm lựa chọn (Cố định)
+                            </span>
+                          ) : (
+                            <select
+                              value={q.type || 'text'}
+                              onChange={e => {
+                                const val = e.target.value as Question['type'];
+                                const qs = [...(surveyFormData.questions || [])];
+                                qs[qIndex].type = val;
+                                if ((val === 'single_choice' || val === 'multi_choice') && (!qs[qIndex].options || qs[qIndex].options.length < 2)) {
+                                  qs[qIndex].options = ['', '', '', ''];
+                                }
+                                setSurveyFormData({ ...surveyFormData, questions: qs });
+                              }}
+                              className="p-1 bg-white border border-slate-300 rounded text-xs font-semibold"
+                            >
+                              <option value="text">Điền thông tin văn bản</option>
+                              <option value="date">Điền ngày tháng</option>
+                              <option value="single_choice">Chọn 1 mục (Trắc nghiệm)</option>
+                              <option value="multi_choice">Chọn nhiều mục (Dấu check)</option>
+                              <option value="file">Tệp đính kèm (Tải lên)</option>
+                            </select>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveQuestionFromSurvey(qIndex)}
+                          className="text-rose-600 hover:text-rose-800 p-1"
+                          title="Xóa câu hỏi này"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Question Title & File Code Prefix Input */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className={q.type === 'file' ? 'sm:col-span-2' : 'sm:col-span-3'}>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">Tiêu đề câu hỏi / yêu cầu:</label>
+                        <input
+                          type="text"
+                          required
+                          value={q.question}
+                          onChange={e => {
+                            const qs = [...(surveyFormData.questions || [])];
+                            qs[qIndex].question = e.target.value;
+                            setSurveyFormData({ ...surveyFormData, questions: qs });
+                          }}
+                          placeholder="Nhập nội dung câu hỏi hoặc yêu cầu..."
+                          className="w-full p-2 bg-white border border-slate-300 rounded-lg font-semibold text-slate-900"
+                        />
+                      </div>
+
+                      {q.type === 'file' && (
+                        <div>
+                          <label className="text-[11px] font-semibold text-[#7a0f2b] block mb-0.5">
+                            Tiền tố / Mã tệp (đặt cạnh tiêu đề):
+                          </label>
+                          <input
+                            type="text"
+                            autoCapitalize="none"
+                            value={q.file_code_prefix || ''}
+                            onChange={e => {
+                              const qs = [...(surveyFormData.questions || [])];
+                              qs[qIndex].file_code_prefix = e.target.value.trim().toUpperCase();
+                              setSurveyFormData({ ...surveyFormData, questions: qs });
+                            }}
+                            placeholder="VD: CCCD, GIAY_KHAI_SINH..."
+                            className="w-full p-2 bg-white border border-rose-300 rounded-lg font-mono text-xs font-bold text-[#7a0f2b]"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Options if single_choice or multi_choice */}
+                    {(q.type === 'single_choice' || q.type === 'multi_choice') && (
+                      <div className="space-y-2 pt-2 border-t border-slate-200">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-[11px] font-semibold text-slate-600">
+                            {surveyFormData.survey_type === 'quiz'
+                              ? 'Các phương án lựa chọn (Tích nút tròn để chọn đáp án đúng):'
+                              : q.type === 'multi_choice'
+                              ? 'Các mục lựa chọn (Học sinh có thể tích chọn nhiều mục bằng dấu check):'
+                              : 'Các mục lựa chọn (Học sinh chỉ chọn 1 mục):'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const qs = [...(surveyFormData.questions || [])];
+                              const currentOpts = [...(qs[qIndex].options || [])];
+                              if (currentOpts.length >= 26) {
+                                showToast('Tối đa 26 phương án cho mỗi câu hỏi.', 'error');
+                                return;
+                              }
+                              currentOpts.push('');
+                              qs[qIndex].options = currentOpts;
+                              setSurveyFormData({ ...surveyFormData, questions: qs });
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-rose-50 text-[#7a0f2b] border border-rose-200 rounded-lg text-[11px] font-bold cursor-pointer transition-colors"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Thêm phương án
+                          </button>
+                        </div>
+
+                        {q.options?.map((opt, optIndex) => {
+                          const letter = String.fromCharCode(65 + optIndex);
+                          const isCorrect = q.correct_answer === optIndex;
+                          const canRemoveOption = (q.options?.length || 0) > 2;
+
+                          return (
+                            <div key={optIndex} className="flex items-center gap-2">
+                              {surveyFormData.survey_type === 'quiz' ? (
+                                <input
+                                  type="radio"
+                                  name={`correct_${q.id || qIndex}`}
+                                  checked={isCorrect}
+                                  onChange={() => {
+                                    const qs = [...(surveyFormData.questions || [])];
+                                    qs[qIndex].correct_answer = optIndex;
+                                    setSurveyFormData({ ...surveyFormData, questions: qs });
+                                  }}
+                                  title="Chọn làm đáp án đúng"
+                                  className="w-4 h-4 text-[#7a0f2b] cursor-pointer shrink-0"
+                                />
+                              ) : q.type === 'multi_choice' ? (
+                                <CheckSquare className="w-4 h-4 text-emerald-600 shrink-0" />
+                              ) : null}
+                              <span className="w-5 font-bold text-slate-700 shrink-0">{letter}.</span>
+                              <input
+                                type="text"
+                                value={opt}
+                                onChange={e => {
+                                  const qs = [...(surveyFormData.questions || [])];
+                                  qs[qIndex].options[optIndex] = e.target.value;
+                                  setSurveyFormData({ ...surveyFormData, questions: qs });
+                                }}
+                                placeholder={`Nội dung phương án ${letter}...`}
+                                className="flex-1 p-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                              />
+                              <button
+                                type="button"
+                                disabled={!canRemoveOption}
+                                onClick={() => {
+                                  if (!canRemoveOption) return;
+                                  const qs = [...(surveyFormData.questions || [])];
+                                  const nextOpts = [...(qs[qIndex].options || [])];
+                                  nextOpts.splice(optIndex, 1);
+                                  qs[qIndex].options = nextOpts;
+                                  if (typeof qs[qIndex].correct_answer === 'number') {
+                                    if (qs[qIndex].correct_answer === optIndex) {
+                                      qs[qIndex].correct_answer = 0;
+                                    } else if (qs[qIndex].correct_answer! > optIndex) {
+                                      qs[qIndex].correct_answer = qs[qIndex].correct_answer! - 1;
+                                    }
+                                  }
+                                  setSurveyFormData({ ...surveyFormData, questions: qs });
+                                }}
+                                title={canRemoveOption ? 'Bớt phương án này' : 'Cần tối thiểu 2 phương án'}
+                                className={`p-1.5 rounded-lg border transition-colors shrink-0 ${
+                                  canRemoveOption
+                                    ? 'text-rose-600 border-rose-200 bg-white hover:bg-rose-50 cursor-pointer'
+                                    : 'text-slate-300 border-slate-200 bg-slate-100 cursor-not-allowed'
+                                }`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSurveyModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl cursor-pointer"
+                >
+                  Hủy bỏ
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-[#7a0f2b] hover:bg-[#8f1334] text-white font-bold rounded-xl cursor-pointer"
+                >
+                  Lưu đợt khảo sát
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ----------------- MODAL: CREATE SURVEY FROM CODE (JSON) ----------------- */}
-      <CodeSurveyModal
-        isOpen={showCodeSurveyModal}
-        onClose={() => setShowCodeSurveyModal(false)}
-        onSaveSurveyFromCode={handleSaveSurveyFromCode}
-      />
+      {showCodeSurveyModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-3xl w-full border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Code className="w-5 h-5 text-rose-300" />
+                <h3 className="font-bold text-base">Tạo bài khảo sát bằng Code (JSON)</h3>
+              </div>
+              <button
+                onClick={() => setShowCodeSurveyModal(false)}
+                className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 flex-1 overflow-y-auto space-y-4 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                <p className="text-slate-700 leading-relaxed">
+                  Dán đoạn mã JSON quy định tiêu đề, loại khảo sát, mã ID Google Drive và danh sách câu hỏi.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadSampleCode}
+                    className="px-3 py-1.5 bg-white text-[#7a0f2b] border border-rose-300 rounded-lg font-bold hover:bg-rose-100 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Tải đoạn code mẫu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleInsertSampleCode}
+                    className="px-3 py-1.5 bg-[#7a0f2b] text-white rounded-lg font-bold hover:bg-[#8f1334] cursor-pointer"
+                  >
+                    Chèn code mẫu vào ô
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 block mb-1">Đoạn mã JSON khảo sát:</label>
+                <textarea
+                  rows={14}
+                  value={codeSurveyText}
+                  onChange={e => setCodeSurveyText(e.target.value)}
+                  placeholder="Dán đoạn mã JSON vào đây..."
+                  className="w-full p-3 font-mono text-xs bg-slate-950 text-emerald-400 rounded-xl border border-slate-800 focus:ring-2 focus:ring-[#7a0f2b]"
+                ></textarea>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setShowCodeSurveyModal(false)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 font-semibold rounded-xl text-xs hover:bg-slate-50 cursor-pointer"
+              >
+                Đóng lại
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateSurveyFromCode}
+                className="px-6 py-2.5 bg-[#7a0f2b] hover:bg-[#8f1334] text-white font-bold rounded-xl text-xs shadow-md transition-colors cursor-pointer"
+              >
+                Kiểm tra & Tạo khảo sát từ Code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Survey Confirmation Modal */}
       {surveyToDelete && (
@@ -2458,7 +3266,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
         const activeSurvey = surveys.find(s => s.id === (selectedStudentDetail.response?.survey_id || progressSurveyId)) || selectedProgressSurvey;
         const resp = selectedStudentDetail.response;
         const student = selectedStudentDetail.student;
-        const isQuiz = activeSurvey?.survey_type === 'quiz' || activeSurvey?.survey_type === 'exam';
+        const isQuiz = activeSurvey?.survey_type === 'quiz';
 
         return (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
@@ -2540,16 +3348,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                   <div className="space-y-3.5">
                     {activeSurvey.questions.map((q, qIdx) => {
                       const ans = resp.answers ? (resp.answers[q.id] !== undefined ? resp.answers[q.id] : resp.answers[String(qIdx)]) : undefined;
-                      const qType = q.type || (q.options && q.options.length > 0 ? 'single_choice' : 'text');
-                      const correct = (activeSurvey.survey_type === 'quiz' || activeSurvey.survey_type === 'exam')
-                        ? isAnswerCorrect(ans, q)
-                        : null;
+                      const correct = isQuiz ? isAnswerCorrect(ans, q) : null;
+                      const fileUrl = ans && typeof ans === 'object' ? (ans.fileUrl || ans.url) : undefined;
+                      const fileName = ans && typeof ans === 'object' ? (ans.fileName || ans.name) : undefined;
 
                       return (
                         <div
                           key={q.id || qIdx}
                           className={`p-4 rounded-xl border transition-all ${
-                            (activeSurvey.survey_type === 'quiz' || activeSurvey.survey_type === 'exam')
+                            isQuiz
                               ? correct
                                 ? 'bg-emerald-50/50 border-emerald-200'
                                 : 'bg-rose-50/50 border-rose-200'
@@ -2562,20 +3369,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                                 {qIdx + 1}
                               </span>
                               <div>
-                                <div className="text-sm font-bold text-slate-900 leading-snug">
-                                  <MathRenderer content={q.question} inline />
-                                </div>
+                                <p className="text-sm font-bold text-slate-900 leading-snug">{q.question}</p>
                                 {q.file_code_prefix && (
                                   <span className="text-[10px] text-slate-500 font-mono mt-0.5 inline-block">Mã tệp: [{q.file_code_prefix}]</span>
                                 )}
                               </div>
                             </div>
-                            {(activeSurvey.survey_type === 'quiz' || activeSurvey.survey_type === 'exam') && (
+                            {isQuiz && (
                               <span
                                 className={`text-[11px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
                                   correct
                                     ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-[#7a0f2b]'
+                                    : 'bg-rose-100 text-rose-800'
                                 }`}
                               >
                                 {correct ? '✓ Đúng' : '✗ Sai'}
@@ -2583,33 +3388,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                             )}
                           </div>
 
-                          {/* Image if present */}
-                          {q.image_url && (
-                            <div className="my-2">
-                              <img
-                                src={q.image_url}
-                                alt="Hình ảnh đính kèm"
-                                className="max-h-48 rounded-lg border border-slate-200 object-contain bg-white p-1"
-                              />
-                            </div>
-                          )}
-
                           {/* Detail of response */}
                           <div className="mt-2 text-xs">
-                            {qType === 'file' ? (
+                            {q.type === 'file' ? (
                               <div className="mt-1 bg-white p-3 rounded-lg border border-slate-200">
                                 <span className="text-slate-500 font-semibold block mb-1">Tệp đính kèm đã tải lên:</span>
                                 {ans ? (
-                                  typeof ans === 'object' && ans.url ? (
-                                    <a
-                                      href={ans.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#7a0f2b] text-white font-bold rounded-lg text-xs hover:bg-[#8f1334] transition-colors"
-                                    >
-                                      <ExternalLink className="w-3.5 h-3.5" />
-                                      <span>{ans.name || 'Xem tệp trên Google Drive'}</span>
-                                    </a>
+                                  fileUrl ? (
+                                    <div className="space-y-2">
+                                      <a
+                                        href={fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#7a0f2b] text-white font-bold rounded-lg text-xs hover:bg-[#8f1334] transition-colors"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                        <span>{fileName || 'Xem tệp trên Google Drive'}</span>
+                                      </a>
+                                    </div>
                                   ) : typeof ans === 'string' && (ans.startsWith('http') || ans.includes('drive.google.com')) ? (
                                     <a
                                       href={ans}
@@ -2629,43 +3425,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                                   <span className="text-slate-400 italic">Không có tệp đính kèm</span>
                                 )}
                               </div>
-                            ) : qType === 'true_false' ? (
-                              <div className="space-y-1.5">
-                                {['a', 'b', 'c', 'd'].map((letter, optIdx) => {
-                                  const sVal = ans && typeof ans === 'object' ? ans[optIdx] : undefined;
-                                  const cVal = q.correct_answers ? q.correct_answers[optIdx] : false;
-                                  const isItemMatch = sVal === cVal;
-
-                                  return (
-                                    <div key={optIdx} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-slate-200">
-                                      <div className="flex-1 mr-2">
-                                        <b>{letter})</b> <MathRenderer content={q.options?.[optIdx] || ''} inline />
-                                      </div>
-                                      <span className={isItemMatch ? 'text-emerald-700 font-bold shrink-0' : 'text-rose-700 font-bold shrink-0'}>
-                                        HS: {sVal === true ? 'ĐÚNG' : sVal === false ? 'SAI' : 'Trống'} | Chuẩn: {cVal ? 'ĐÚNG' : 'SAI'} {isItemMatch ? '✓' : '✗'}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (qType === 'short_number' || qType === 'short_text') ? (
-                              <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200">
-                                <div>
-                                  <span className="text-slate-500 font-semibold">Học sinh điền: </span>
-                                  <span className="font-mono font-bold text-slate-900">{ans !== undefined && ans !== null && ans !== '' ? String(ans) : '(Bỏ trống)'}</span>
-                                </div>
-                                <div className="text-emerald-700 font-semibold">
-                                  Đáp án chuẩn: <span className="font-mono font-bold">{String(q.correct_answer ?? '')}</span>
-                                </div>
-                              </div>
                             ) : (
                               <div className="space-y-1.5">
                                 <div className="flex items-start gap-1.5">
-                                  <span className="text-slate-500 font-semibold shrink-0">Câu trả lời: </span>
+                                  <span className="text-slate-500 font-semibold shrink-0">Câu trả lời:</span>
                                   <span className="font-bold text-slate-900 break-words">
                                     {ans !== undefined && ans !== null && ans !== '' ? (
-                                      typeof ans === 'number' && q.options && q.options[ans] !== undefined ? (
-                                        <span>{String.fromCharCode(65 + ans)}. <MathRenderer content={q.options[ans]} inline /></span>
+                                      Array.isArray(ans) ? (
+                                        ans.length > 0 ? (
+                                          ans
+                                            .map(idx => (typeof idx === 'number' && q.options?.[idx] !== undefined) ? `${String.fromCharCode(65 + idx)}. ${q.options[idx]}` : String(idx))
+                                            .join(', ')
+                                        ) : (
+                                          <span className="text-slate-400 italic font-normal">(Chưa trả lời)</span>
+                                        )
+                                      ) : typeof ans === 'number' && q.options && q.options[ans] !== undefined ? (
+                                        `${String.fromCharCode(65 + ans)}. ${q.options[ans]}`
                                       ) : (
                                         String(ans)
                                       )
@@ -2674,15 +3449,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                                     )}
                                   </span>
                                 </div>
-                                {(activeSurvey.survey_type === 'quiz' || activeSurvey.survey_type === 'exam') && q.correct_answer !== undefined && (
+                                {isQuiz && q.correct_answer !== undefined && (
                                   <div className="flex items-start gap-1.5 text-slate-600">
-                                    <span className="text-emerald-700 font-semibold shrink-0">Đáp án đúng: </span>
+                                    <span className="text-emerald-700 font-semibold shrink-0">Đáp án đúng:</span>
                                     <span className="font-semibold text-emerald-800 break-words">
-                                      {q.options && q.options[q.correct_answer] !== undefined ? (
-                                        <span>{String.fromCharCode(65 + q.correct_answer)}. <MathRenderer content={q.options[q.correct_answer]} inline /></span>
-                                      ) : (
-                                        String(q.correct_answer)
-                                      )}
+                                      {q.options && q.options[q.correct_answer] !== undefined
+                                        ? `${String.fromCharCode(65 + q.correct_answer)}. ${q.options[q.correct_answer]}`
+                                        : String(q.correct_answer)}
                                     </span>
                                   </div>
                                 )}
@@ -2724,6 +3497,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ session, onOpenSqlModa
                 </h3>
                 <p className="text-xs text-indigo-200 mt-0.5">
                   Đợt khảo sát: <b className="text-white">{selectedProgressSurvey?.title || 'Chưa chọn'}</b>
+                  {isSelectedSurveyScoped && (
+                    <span className="ml-2 inline-block px-2 py-0.5 rounded bg-white/15 text-white font-semibold">
+                      Phạm vi giao: {eligibleClasses.length} lớp ({eligibleStudents.length} HS)
+                    </span>
+                  )}
                 </p>
               </div>
               <button

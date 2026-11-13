@@ -1,8 +1,6 @@
 {
-  "name": "Hệ thống Kiểm tra Khảo sát",
+  "name": "Hệ thống Khảo sát & Thu thập Thông tin Học sinh Toàn trường",
   "description": "Nền tảng trực tuyến khảo sát kiến thức, lấy ý kiến và thu thập thông tin học sinh toàn trường dành cho Học sinh, Giáo viên và Quản trị viên.",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

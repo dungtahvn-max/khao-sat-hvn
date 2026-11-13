@@ -26,6 +26,9 @@ function doPost(e) {
     var fileName = data.fileName;
     var base64Data = data.base64;
     var mimeType = data.mimeType || 'application/octet-stream';
+    var className = data.className ? String(data.className).trim() : '';
+    var fileBaseName = data.fileBaseName ? String(data.fileBaseName).trim() : '';
+    var oldFileId = data.oldFileId ? String(data.oldFileId).trim() : '';
 
     if (!folderId || !fileName || !base64Data) {
       return responseJSON({
@@ -34,15 +37,27 @@ function doPost(e) {
       });
     }
 
-    // Lấy thư mục Google Drive theo folderId
-    var folder;
+    // Lấy thư mục Google Drive gốc theo folderId
+    var rootFolder;
     try {
-      folder = DriveApp.getFolderById(folderId);
+      rootFolder = DriveApp.getFolderById(folderId);
     } catch (err) {
       return responseJSON({
         success: false,
         error: 'Không tìm thấy thư mục Google Drive với ID: ' + folderId + '. Vui lòng kiểm tra lại quyền truy cập hoặc ID thư mục.'
       });
+    }
+
+    // Nếu có tên lớp, kiểm tra thư mục lớp bên trong thư mục gốc; nếu chưa có thì tự tạo mới
+    var targetFolder = rootFolder;
+    if (className !== '') {
+      var cleanClassFolderName = className.replace(/[\\/:*?"<>|]/g, '_');
+      var subFolders = rootFolder.getFoldersByName(cleanClassFolderName);
+      if (subFolders.hasNext()) {
+        targetFolder = subFolders.next();
+      } else {
+        targetFolder = rootFolder.createFolder(cleanClassFolderName);
+      }
     }
 
     // Tách phần tiền tố base64 nếu có (ví dụ: data:image/png;base64,...)
@@ -55,20 +70,52 @@ function doPost(e) {
     var decodedBytes = Utilities.base64Decode(cleanBase64);
     var blob = Utilities.newBlob(decodedBytes, mimeType, fileName);
 
-    // Tự động kiểm tra và ghi đè: nếu học sinh đã tải file đó rồi, xóa tệp cũ để ghi đè tệp mới
-    var existingFiles = folder.getFilesByName(fileName);
-    while (existingFiles.hasNext()) {
-      var oldFile = existingFiles.next();
+    // 1. Xóa file cũ theo oldFileId nếu học sinh nộp lại / thay thế tệp
+    if (oldFileId !== '') {
       try {
-        oldFile.setTrashed(true);
-      } catch (errTrash) {
-        // Bỏ qua nếu xảy ra lỗi quyền xóa
+        var prevFile = DriveApp.getFileById(oldFileId);
+        if (prevFile) {
+          prevFile.setTrashed(true);
+        }
+      } catch (errOldId) {
+        // Bỏ qua nếu file cũ không tồn tại hoặc đã bị xóa trước đó
       }
     }
 
-    // Tạo tệp trong thư mục chỉ định
-    var file = folder.createFile(blob);
-    
+    // Helper xóa các tệp trùng tên hoặc cùng tiền tố định danh học sinh (dù khác phần mở rộng)
+    function trashMatchingFilesInFolder(searchFolder) {
+      if (!searchFolder) return;
+      var exactFiles = searchFolder.getFilesByName(fileName);
+      while (exactFiles.hasNext()) {
+        var fExact = exactFiles.next();
+        try {
+          fExact.setTrashed(true);
+        } catch (errT1) {}
+      }
+
+      if (fileBaseName !== '') {
+        var allFiles = searchFolder.getFiles();
+        while (allFiles.hasNext()) {
+          var f = allFiles.next();
+          var fName = f.getName();
+          if (fName === fileBaseName || fName.indexOf(fileBaseName + '.') === 0) {
+            try {
+              f.setTrashed(true);
+            } catch (errT2) {}
+          }
+        }
+      }
+    }
+
+    // 2. Xóa tệp cũ trong thư mục lớp (và cả thư mục gốc nếu trước đó từng lưu ở gốc)
+    trashMatchingFilesInFolder(targetFolder);
+    if (targetFolder.getId() !== rootFolder.getId()) {
+      trashMatchingFilesInFolder(rootFolder);
+    }
+
+    // Tạo tệp mới trong thư mục lớp
+    var file = targetFolder.createFile(blob);
+
     // Đặt quyền truy cập công khai để xem tệp nếu cần
     try {
       file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
@@ -81,7 +128,9 @@ function doPost(e) {
       fileId: file.getId(),
       fileName: file.getName(),
       fileUrl: file.getUrl(),
-      downloadUrl: file.getDownloadUrl()
+      downloadUrl: file.getDownloadUrl(),
+      folderId: targetFolder.getId(),
+      folderName: targetFolder.getName()
     });
 
   } catch (error) {

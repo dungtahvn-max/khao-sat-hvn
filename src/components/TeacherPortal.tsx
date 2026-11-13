@@ -1,18 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Teacher, Student, Survey, SurveyResponse } from '../types';
-import { getStudents, getSurveys, getResponses, saveSurvey } from '../services/supabase';
+import { getStudents, getSurveys, getResponses } from '../services/supabase';
 import { exportClassResultsToExcel } from '../utils/excel';
-import { isAnswerCorrect, getTrueFalseMatchCount } from '../utils/quiz';
+import { isAnswerCorrect } from '../utils/quiz';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { formatClassDisplay, sortClassNames } from '../utils/classOrder';
-import { SurveyEditorModal } from './SurveyEditorModal';
-import { CodeSurveyModal } from './CodeSurveyModal';
-import { MathRenderer } from './MathRenderer';
+import { formatClassDisplay } from '../utils/classOrder';
 import {
   Users, CheckCircle2, Clock, Award, FileSpreadsheet,
   Copy, Check, Search, Eye, X, BookOpen, AlertCircle, ExternalLink,
-  KeyRound, Plus, Code, Edit2, Sparkles, FileText
+  KeyRound
 } from 'lucide-react';
 
 interface TeacherPortalProps {
@@ -22,7 +19,6 @@ interface TeacherPortalProps {
 export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
   const { config } = useTheme();
   const [students, setStudents] = useState<Student[]>([]);
-  const [allClasses, setAllClasses] = useState<string[]>([]);
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [selectedSurveyId, setSelectedSurveyId] = useState<string>('');
@@ -30,26 +26,15 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Survey Creation & Editing for Teacher
-  const [showSurveyModal, setShowSurveyModal] = useState(false);
-  const [editingSurvey, setEditingSurvey] = useState<Survey | null>(null);
-  const [showCodeSurveyModal, setShowCodeSurveyModal] = useState(false);
-
   // Change Password state
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
   // Copy Zalo state
   const [copiedZalo, setCopiedZalo] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Student detail modal
   const [detailStudent, setDetailStudent] = useState<Student | null>(null);
   const [detailResponse, setDetailResponse] = useState<SurveyResponse | null>(null);
-
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
-  };
 
   useEffect(() => {
     loadData();
@@ -64,24 +49,21 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
         getResponses(),
       ]);
 
-      const classList = sortClassNames(Array.from(new Set(allStudents.map(s => s.class_name.trim().toUpperCase()))));
-      setAllClasses(classList);
-
       const classStudents = allStudents.filter(
         s => s.class_name.trim().toUpperCase() === teacher.homeroom_class.trim().toUpperCase()
       );
       setStudents(classStudents);
-
       const normalizedClass = teacher.homeroom_class.trim().toUpperCase();
       const applicableSurveys = allSurveys.filter(
         s => !s.target_classes || s.target_classes.length === 0 || s.target_classes.includes('ALL') || s.target_classes.map(c => c.trim().toUpperCase()).includes(normalizedClass)
       );
-      setSurveys(applicableSurveys.length > 0 ? applicableSurveys : allSurveys);
+      setSurveys(applicableSurveys);
       setResponses(allResponses);
 
-      const targetList = applicableSurveys.length > 0 ? applicableSurveys : allSurveys;
-      if (targetList.length > 0 && (!selectedSurveyId || !targetList.some(s => s.id === selectedSurveyId))) {
-        setSelectedSurveyId(targetList[0].id);
+      if (applicableSurveys.length > 0 && (!selectedSurveyId || !applicableSurveys.some(s => s.id === selectedSurveyId))) {
+        setSelectedSurveyId(applicableSurveys[0].id);
+      } else if (applicableSurveys.length === 0) {
+        setSelectedSurveyId('');
       }
     } catch (e) {
       console.error('Error loading teacher data', e);
@@ -108,7 +90,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
   const completionRate = totalStudents > 0 ? Math.round((completedCount / totalStudents) * 100) : 0;
 
   let averageScore: number | null = null;
-  if ((currentSurvey?.survey_type === 'quiz' || currentSurvey?.survey_type === 'exam') && completedCount > 0) {
+  if (currentSurvey?.survey_type === 'quiz' && completedCount > 0) {
     const totalScore = completedStudents.reduce((sum, s) => {
       const r = responseMap.get(s.cccd);
       return sum + (r?.score || 0);
@@ -171,132 +153,43 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
     setDetailResponse(resp);
   };
 
-  // Survey Creation / Editing for Teacher
-  const handleOpenCreateSurvey = () => {
-    setEditingSurvey(null);
-    setShowSurveyModal(true);
-  };
-
-  const handleOpenEditCurrentSurvey = () => {
-    if (!currentSurvey) return;
-    setEditingSurvey(currentSurvey);
-    setShowSurveyModal(true);
-  };
-
-  const handleSaveSurveyFromModal = async (surveyToSave: Survey): Promise<boolean> => {
-    const ok = await saveSurvey(surveyToSave);
-    if (ok) {
-      showToast(`Đã lưu bài "${surveyToSave.title}" thành công!`);
-      setShowSurveyModal(false);
-      await loadData();
-      setSelectedSurveyId(surveyToSave.id);
-      return true;
-    } else {
-      showToast('Lỗi khi lưu bài khảo sát!', 'error');
-      return false;
-    }
-  };
-
-  const handleSaveSurveyFromCode = async (surveyToSave: Survey) => {
-    const ok = await saveSurvey(surveyToSave);
-    if (ok) {
-      showToast(`Đã tạo thành công bài "${surveyToSave.title}" từ mã code!`);
-      setShowCodeSurveyModal(false);
-      await loadData();
-      setSelectedSurveyId(surveyToSave.id);
-    } else {
-      showToast('Lỗi khi lưu khảo sát từ code', 'error');
-    }
-  };
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          className={`fixed top-20 right-4 z-50 p-4 rounded-xl shadow-lg border flex items-center space-x-2 text-xs font-bold animate-in fade-in slide-in-from-top-2 ${
-            toast.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-              : 'bg-rose-50 text-rose-800 border-rose-300'
-          }`}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-          )}
-          <span>{toast.message}</span>
-        </div>
-      )}
-
-      {/* Teacher Action Bar: Create Survey, Import Code, Survey Selector */}
-      <div className="bg-white rounded-2xl p-4 border border-rose-100 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        {/* Left: Survey Dropdown & Edit button */}
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Survey Selector Bar */}
+      <div className="bg-white rounded-2xl p-4 border border-rose-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center space-x-2">
           <label className="text-xs font-bold text-slate-700 whitespace-nowrap">
             Chọn đợt khảo sát:
           </label>
           <select
             value={selectedSurveyId}
             onChange={e => setSelectedSurveyId(e.target.value)}
-            className="bg-slate-50 border border-slate-300 text-slate-800 text-xs sm:text-sm rounded-xl px-3 py-2 focus:ring-2 focus:ring-[#7a0f2b] focus:bg-white font-bold"
+            className="bg-slate-50 border border-slate-300 text-slate-800 text-xs sm:text-sm rounded-xl px-3 py-2 focus:ring-2 focus:ring-[#7a0f2b] focus:bg-white font-medium"
           >
-            {surveys.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.survey_type === 'exam' ? '📝 [Kiểm tra] ' : s.survey_type === 'quiz' ? '🎯 [Trắc nghiệm] ' : '📋 [Thu thập] '}
-                {s.title} ({s.is_active ? 'Đang mở' : 'Đã đóng'})
-              </option>
-            ))}
+            {surveys.length === 0 ? (
+              <option value="">Chưa có đợt khảo sát nào cho lớp {formatClassDisplay(teacher.homeroom_class)}</option>
+            ) : (
+              surveys.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.title} ({s.is_active ? 'Đang mở' : 'Đã đóng'})
+                </option>
+              ))
+            )}
           </select>
-
-          {currentSurvey && (
-            <button
-              type="button"
-              onClick={handleOpenEditCurrentSurvey}
-              className="p-2 text-slate-600 hover:text-[#7a0f2b] hover:bg-rose-50 rounded-xl border border-slate-200 transition-colors cursor-pointer"
-              title="Chỉnh sửa bài khảo sát / kiểm tra này"
-            >
-              <Edit2 className="w-4 h-4" />
-            </button>
-          )}
         </div>
 
-        {/* Right: Teacher Actions (Create Survey, Code Import, Export Excel, Zalo Copy) */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Create Survey Button for Teacher */}
-          <button
-            type="button"
-            onClick={handleOpenCreateSurvey}
-            className="inline-flex items-center px-3.5 py-2 bg-[#7a0f2b] hover:bg-[#8f1334] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
-            title="Giáo viên tạo khảo sát hoặc đề kiểm tra mới"
-          >
-            <Plus className="w-4 h-4 mr-1.5" />
-            Tạo đề / Khảo sát mới
-          </button>
-
-          {/* Import Code Button for Teacher */}
-          <button
-            type="button"
-            onClick={() => setShowCodeSurveyModal(true)}
-            className="inline-flex items-center px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
-            title="Tạo nhanh khảo sát bằng mã JSON (Hỗ trợ LaTeX & TikZ)"
-          >
-            <Code className="w-4 h-4 mr-1.5 text-rose-300" />
-            Nhập đề từ Code
-          </button>
-
           <button
             onClick={handleExportExcel}
-            className="inline-flex items-center px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-300 transition-all cursor-pointer"
+            className="inline-flex items-center px-3.5 py-2 bg-[#7a0f2b] hover:bg-[#8f1334] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
             title="Xuất kết quả khảo sát của lớp ra tệp Excel"
           >
-            <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-700" />
-            Xuất Excel lớp
+            <FileSpreadsheet className="w-4 h-4 mr-1.5" />
+            Xuất Excel kết quả lớp
           </button>
-
           <button
             onClick={handleCopyZaloMessage}
-            className={`inline-flex items-center px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
+            className={`inline-flex items-center px-3.5 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs ${
               copiedZalo
                 ? 'bg-[#7a0f2b] text-white'
                 : 'bg-rose-50 text-[#7a0f2b] hover:bg-rose-100 border border-rose-200'
@@ -305,12 +198,12 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
             {copiedZalo ? (
               <>
                 <Check className="w-4 h-4 mr-1.5" />
-                Đã sao chép Zalo!
+                Đã sao chép nội dung Zalo!
               </>
             ) : (
               <>
                 <Copy className="w-4 h-4 mr-1.5" />
-                Dán Zalo nhắc nhở
+                Copy danh sách chưa hoàn thành (Dán Zalo)
               </>
             )}
           </button>
@@ -363,11 +256,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
               {averageScore !== null ? `${averageScore} đ` : 'N/A'}
             </span>
             <span className="text-[11px] text-slate-400 block mt-0.5">
-              {currentSurvey?.survey_type === 'exam'
-                ? 'Thang 10 điểm'
-                : currentSurvey?.survey_type === 'quiz'
-                ? `Thang ${currentSurvey.questions.length} điểm`
-                : 'Phiếu ý kiến'}
+              {currentSurvey?.survey_type === 'quiz' ? `Thang ${currentSurvey.questions.length} điểm` : 'Phiếu ý kiến'}
             </span>
           </div>
           <div className="w-11 h-11 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700">
@@ -446,7 +335,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
         {loading ? (
           <div className="p-12 text-center text-slate-500 text-sm">
             <div className="w-6 h-6 border-2 border-[#7a0f2b] border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-            Đang tải dữ liệu học sinh lớp {formatClassDisplay(teacher.homeroom_class)}...
+            Đang tải dữ liệu học sinh lớp {teacher.homeroom_class}...
           </div>
         ) : filteredStudents.length === 0 ? (
           <div className="p-12 text-center text-slate-500 text-sm">
@@ -462,7 +351,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
                   <th className="px-4 py-3">Số CCCD</th>
                   <th className="px-4 py-3">Ngày sinh</th>
                   <th className="px-4 py-3 text-center">Trạng thái</th>
-                  {(currentSurvey?.survey_type === 'quiz' || currentSurvey?.survey_type === 'exam') && (
+                  {currentSurvey?.survey_type === 'quiz' && (
                     <th className="px-4 py-3 text-center">Điểm số</th>
                   )}
                   <th className="px-4 py-3">Thời gian nộp</th>
@@ -509,13 +398,11 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
                           {isDone ? 'Đã hoàn thành' : 'Chưa làm'}
                         </span>
                       </td>
-                      {(currentSurvey?.survey_type === 'quiz' || currentSurvey?.survey_type === 'exam') && (
+                      {currentSurvey?.survey_type === 'quiz' && (
                         <td className="px-4 py-3 text-center font-bold">
                           {isDone && resp?.score !== undefined ? (
                             <span className="text-[#7a0f2b] bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
-                              {currentSurvey.survey_type === 'exam'
-                                ? `${resp.score} / 10 đ`
-                                : `${resp.score} / ${resp.total_questions || currentSurvey?.questions.length}`}
+                              {resp.score} / {resp.total_questions || currentSurvey?.questions.length}
                             </span>
                           ) : (
                             <span className="text-slate-400">-</span>
@@ -561,9 +448,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
                   <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 flex items-center justify-between">
                     <div>
                       <span className="text-[#7a0f2b] font-bold block">
-                        {currentSurvey?.survey_type === 'exam'
-                          ? `Kết quả kiểm tra: ${detailResponse.score} / 10 điểm`
-                          : currentSurvey?.survey_type === 'quiz'
+                        {currentSurvey?.survey_type === 'quiz'
                           ? `Kết quả: ${detailResponse.score} / ${detailResponse.total_questions || currentSurvey?.questions.length} câu đúng`
                           : 'Đã hoàn thành khảo sát thu thập thông tin'}
                       </span>
@@ -577,102 +462,65 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
                     <h4 className="font-bold text-slate-800 text-sm">Chi tiết từng câu hỏi:</h4>
                     {currentSurvey?.questions.map((q, idx) => {
                       const studentAns = detailResponse.answers?.[q.id];
-                      const qType = q.type || (q.options && q.options.length > 0 ? 'single_choice' : 'text');
                       const isCorrect = isAnswerCorrect(studentAns, q);
 
                       return (
                         <div key={q.id} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="font-bold text-slate-900">
-                              <span>Câu {idx + 1}: </span>
-                              <MathRenderer content={q.question} inline />
-                            </div>
-                            {(currentSurvey.survey_type === 'quiz' || currentSurvey.survey_type === 'exam') && (
+                            <span className="font-bold text-slate-900">
+                              Câu {idx + 1}: {q.question}
+                            </span>
+                            {currentSurvey.survey_type === 'quiz' && q.correct_answer !== undefined && (
                               <span
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold flex-shrink-0 ${
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                   isCorrect
                                     ? 'bg-emerald-100 text-emerald-800'
                                     : 'bg-rose-100 text-[#7a0f2b]'
                                 }`}
                               >
-                                {isCorrect ? 'Đúng' : 'Chưa đúng'}
+                                {isCorrect ? 'Đúng' : 'Sai'}
                               </span>
                             )}
                           </div>
 
-                          {/* Image if present */}
-                          {q.image_url && (
-                            <img
-                              src={q.image_url}
-                              alt="Hình ảnh câu hỏi"
-                              className="max-h-40 rounded-lg border border-slate-200 object-contain"
-                            />
-                          )}
-
-                          <div className="text-slate-700 space-y-1.5 pl-2 border-l-2 border-slate-300">
-                            {/* Single choice */}
-                            {qType === 'single_choice' && (
-                              <div>
-                                <span className="text-slate-500">Học sinh chọn: </span>
+                          <div className="text-slate-700 space-y-1 pl-2 border-l-2 border-slate-300">
+                            <div>
+                              <span className="text-slate-500">Học sinh điền/chọn: </span>
+                              {studentAns && typeof studentAns === 'object' && studentAns.fileUrl ? (
+                                <div className="mt-1 flex items-center gap-2">
+                                  <span className="font-mono font-bold text-[#7a0f2b]">{studentAns.fileName}</span>
+                                  <a
+                                    href={studentAns.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2 py-0.5 rounded bg-rose-50 text-[#7a0f2b] border border-rose-200 text-xs font-semibold hover:bg-rose-100 inline-flex items-center gap-1"
+                                  >
+                                    Xem trên Google Drive
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                </div>
+                              ) : (
                                 <span className="font-bold">
-                                  {typeof studentAns === 'number' && q.options?.[studentAns]
+                                  {Array.isArray(studentAns) ? (
+                                    studentAns.length > 0 ? (
+                                      studentAns
+                                        .map(idx => (typeof idx === 'number' && q.options?.[idx]) ? `${String.fromCharCode(65 + idx)}. ${q.options[idx]}` : String(idx))
+                                        .join(', ')
+                                    ) : 'Bỏ trống'
+                                  ) : typeof studentAns === 'number' && q.options?.[studentAns]
                                     ? `${String.fromCharCode(65 + studentAns)}. ${q.options[studentAns]}`
-                                    : studentAns !== undefined && studentAns !== null ? String(studentAns) : 'Bỏ trống'}
+                                    : studentAns !== undefined && studentAns !== null
+                                    ? String(studentAns)
+                                    : 'Bỏ trống'}
                                 </span>
-                                {q.correct_answer !== undefined && q.options && (
-                                  <div className="text-emerald-700 font-semibold mt-1">
-                                    Đáp án chuẩn: {String.fromCharCode(65 + q.correct_answer)}. {q.options[q.correct_answer]}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* True / False */}
-                            {qType === 'true_false' && (
-                              <div className="space-y-1">
-                                {['a', 'b', 'c', 'd'].map((letter, optIdx) => {
-                                  const sVal = studentAns && typeof studentAns === 'object' ? studentAns[optIdx] : undefined;
-                                  const cVal = q.correct_answers ? q.correct_answers[optIdx] : false;
-                                  const isItemMatch = sVal === cVal;
-
-                                  return (
-                                    <div key={optIdx} className="flex items-center justify-between text-[11px] bg-white p-1.5 rounded-lg border border-slate-200">
-                                      <span><b>{letter})</b> {q.options?.[optIdx]}</span>
-                                      <span className={isItemMatch ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
-                                        HS: {sVal === true ? 'ĐÚNG' : sVal === false ? 'SAI' : 'Trống'} | Chuẩn: {cVal ? 'ĐÚNG' : 'SAI'} {isItemMatch ? '✓' : '✗'}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            {/* Short Answers */}
-                            {(qType === 'short_number' || qType === 'short_text') && (
-                              <div>
-                                <div>
-                                  <span className="text-slate-500">Học sinh điền: </span>
-                                  <span className="font-mono font-bold text-slate-900">{String(studentAns || '(Bỏ trống)')}</span>
-                                </div>
-                                <div className="text-emerald-700 font-semibold mt-0.5">
-                                  Đáp án chuẩn: <span className="font-mono">{String(q.correct_answer)}</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* File Upload */}
-                            {qType === 'file' && studentAns && typeof studentAns === 'object' && studentAns.fileUrl && (
-                              <div className="mt-1 flex items-center gap-2">
-                                <span className="font-mono font-bold text-[#7a0f2b]">{studentAns.fileName}</span>
-                                <a
-                                  href={studentAns.fileUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2 py-0.5 rounded bg-rose-50 text-[#7a0f2b] border border-rose-200 text-xs font-semibold hover:bg-rose-100 inline-flex items-center gap-1"
-                                >
-                                  Xem trên Google Drive
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
+                              )}
+                            </div>
+                            {q.correct_answer !== undefined && q.options && currentSurvey.survey_type === 'quiz' && (
+                              <div className="text-emerald-700">
+                                <span>Đáp án chuẩn: </span>
+                                <span className="font-semibold">
+                                  {String.fromCharCode(65 + q.correct_answer)}. {q.options[q.correct_answer]}
+                                </span>
                               </div>
                             )}
                           </div>
@@ -700,24 +548,6 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ teacher }) => {
           </div>
         </div>
       )}
-
-      {/* Survey Editor Modal for Teacher */}
-      <SurveyEditorModal
-        isOpen={showSurveyModal}
-        onClose={() => setShowSurveyModal(false)}
-        onSave={handleSaveSurveyFromModal}
-        editingSurvey={editingSurvey}
-        allClasses={allClasses}
-        currentTeacher={teacher}
-        isAdmin={false}
-      />
-
-      {/* Code Survey Modal for Teacher */}
-      <CodeSurveyModal
-        isOpen={showCodeSurveyModal}
-        onClose={() => setShowCodeSurveyModal(false)}
-        onSaveSurveyFromCode={handleSaveSurveyFromCode}
-      />
 
       {/* Change Password Modal */}
       <ChangePasswordModal

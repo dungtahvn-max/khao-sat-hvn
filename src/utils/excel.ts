@@ -426,8 +426,14 @@ export function exportClassResultsToExcel(
       const qKey = `Câu ${qIndex + 1}`;
       if (resp && resp.answers) {
         const ans = resp.answers[q.id];
-        if (ans !== undefined) {
-          if (typeof ans === 'number' && q.options && q.options[ans]) {
+        if (ans !== undefined && ans !== null) {
+          if (Array.isArray(ans)) {
+            baseRow[qKey] = ans.length > 0
+              ? ans.map(idx => (typeof idx === 'number' && q.options?.[idx]) ? `${String.fromCharCode(65 + idx)}. ${q.options[idx]}` : String(idx)).join('; ')
+              : 'Bỏ trống';
+          } else if (typeof ans === 'object' && (ans.fileUrl || ans.url)) {
+            baseRow[qKey] = `${ans.fileName || ans.name || 'Tệp tải lên'}: ${ans.fileUrl || ans.url}`;
+          } else if (typeof ans === 'number' && q.options && q.options[ans]) {
             baseRow[qKey] = `${String.fromCharCode(65 + ans)}. ${q.options[ans]}`;
           } else {
             baseRow[qKey] = String(ans);
@@ -515,7 +521,7 @@ export function exportFilteredSurveyResponsesToExcel(
   statusLabel: string
 ) {
   const responseMap = new Map<string, SurveyResponse>();
-  responses.forEach(r => responseMap.set(r.student_cccd, r));
+  responses.filter(r => r.survey_id === survey.id).forEach(r => responseMap.set(r.student_cccd, r));
 
   const rows = students.map((s, idx) => {
     const resp = responseMap.get(s.cccd);
@@ -543,9 +549,13 @@ export function exportFilteredSurveyResponsesToExcel(
       if (resp && resp.answers) {
         const ans = resp.answers[q.id];
         if (ans !== undefined && ans !== null) {
-          if (typeof ans === 'object' && ans.fileUrl) {
+          if (Array.isArray(ans)) {
+            baseRow[qKey] = ans.length > 0
+              ? ans.map(idx => (typeof idx === 'number' && q.options?.[idx]) ? `${String.fromCharCode(65 + idx)}. ${q.options[idx]}` : String(idx)).join('; ')
+              : 'Bỏ trống';
+          } else if (typeof ans === 'object' && (ans.fileUrl || ans.url)) {
             // Tệp đính kèm tải lên Google Drive
-            baseRow[qKey] = `${ans.fileName || 'Tệp tải lên'}: ${ans.fileUrl}`;
+            baseRow[qKey] = `${ans.fileName || ans.name || 'Tệp tải lên'}: ${ans.fileUrl || ans.url}`;
           } else if (typeof ans === 'number' && q.options && q.options[ans]) {
             baseRow[qKey] = `${String.fromCharCode(65 + ans)}. ${q.options[ans]}`;
           } else {

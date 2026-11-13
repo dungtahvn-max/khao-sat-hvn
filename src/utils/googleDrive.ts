@@ -13,6 +13,24 @@ export function sanitizeFileNamePart(str: string): string {
     .replace(/[\\/:*?"<>|]/g, '');
 }
 
+export function getStudentFileBaseName(
+  fileCodePrefix: string,
+  student: Student
+): string {
+  const cleanPrefix = sanitizeFileNamePart(fileCodePrefix || 'TEP_DINH_KEM');
+  const cleanStt = student.stt !== undefined && student.stt !== null ? String(student.stt) : '0';
+  const cleanName = sanitizeFileNamePart(student.full_name);
+  const cleanCccd = student.cccd.trim();
+
+  return `${cleanPrefix}-${cleanStt}-${cleanName}-${cleanCccd}`;
+}
+
+export function extractGoogleDriveFileId(fileUrl?: string): string {
+  if (!fileUrl || typeof fileUrl !== 'string') return '';
+  const match = fileUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || fileUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : '';
+}
+
 /**
  * Generates the standardized file name according to user requirement:
  * [mã tệp]-[STT]-[họ và tên học sinh]-[số cccd].[phần mở rộng tệp]
@@ -26,12 +44,7 @@ export function generateStudentFileName(
     ? originalFileName.substring(originalFileName.lastIndexOf('.'))
     : '';
 
-  const cleanPrefix = sanitizeFileNamePart(fileCodePrefix || 'TEP_DINH_KEM');
-  const cleanStt = student.stt !== undefined && student.stt !== null ? String(student.stt) : '0';
-  const cleanName = sanitizeFileNamePart(student.full_name);
-  const cleanCccd = student.cccd.trim();
-
-  return `${cleanPrefix}-${cleanStt}-${cleanName}-${cleanCccd}${ext}`;
+  return `${getStudentFileBaseName(fileCodePrefix, student)}${ext}`;
 }
 
 /**
@@ -41,8 +54,13 @@ export async function uploadFileToGoogleDrive(
   file: File,
   folderId: string,
   formattedFileName: string,
-  onProgress?: (progressPercent: number) => void
-): Promise<{ success: boolean; fileUrl?: string; fileName?: string; error?: string }> {
+  onProgress?: (progressPercent: number) => void,
+  options?: {
+    className?: string;
+    fileBaseName?: string;
+    oldFileId?: string;
+  }
+): Promise<{ success: boolean; fileId?: string; fileUrl?: string; fileName?: string; folderName?: string; error?: string }> {
   try {
     const targetFolderId = (folderId && folderId.trim()) ? folderId.trim() : DEFAULT_GOOGLE_DRIVE_FOLDER_ID;
     if (!targetFolderId) {
@@ -72,6 +90,9 @@ export async function uploadFileToGoogleDrive(
       fileName: formattedFileName,
       mimeType: file.type || 'application/octet-stream',
       base64: base64Data,
+      className: options?.className || '',
+      fileBaseName: options?.fileBaseName || '',
+      oldFileId: options?.oldFileId || '',
     };
 
     // Google Apps Script requires text/plain or no-cors / normal POST
@@ -90,8 +111,10 @@ export async function uploadFileToGoogleDrive(
       if (onProgress) onProgress(100);
       return {
         success: true,
+        fileId: result.fileId,
         fileUrl: result.fileUrl || `https://drive.google.com/file/d/${result.fileId}/view`,
         fileName: formattedFileName,
+        folderName: result.folderName,
       };
     } else {
       return {
